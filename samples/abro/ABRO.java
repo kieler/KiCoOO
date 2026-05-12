@@ -11,8 +11,6 @@ public class ABRO extends State {
     public ABRO() {
         this.Root = new Root();
     }
-
-    @Override
     public Object getVariable(String name) {
         switch (name) {
             case "A":
@@ -27,7 +25,6 @@ public class ABRO extends State {
         throw new IllegalArgumentException("Unknown variable: " + name);
     }
 
-    @Override
     public void setVariable(String name, Object value) {
         switch (name) {
             case "A":
@@ -116,7 +113,7 @@ public class ABRO extends State {
             ABO.reset();
         }
 
-        public class ABO extends State {
+        class ABO extends State {
 
             private final Region Wait;
 
@@ -253,15 +250,9 @@ public class ABRO extends State {
                         }
 
                         @Override
-                        public boolean isTerminated() {
-                            return activeState.isFinal();
-                        }
-
-                        @Override
                         public void tick() {
                             boolean tickAgain = true;
                             while (tickAgain) {
-
                                 activeState.tick();
 
                                 if (activeState.equals(WaitA)) {

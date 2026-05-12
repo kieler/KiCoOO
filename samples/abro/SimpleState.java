@@ -11,16 +11,6 @@ public class SimpleState extends State {
     }
 
     @Override
-    public Object getVariable(String name) {
-        throw new IllegalArgumentException("Unknown variable: " + name);
-    }
-
-    @Override
-    public void setVariable(String name, Object value) {
-        throw new IllegalArgumentException("Unknown variable: " + name);
-    }
-
-    @Override
     public boolean isFinal() {
         return _isFinal;
     }

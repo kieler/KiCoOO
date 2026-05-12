@@ -11,14 +11,6 @@ public abstract class State {
         this.delayEnabled = delayEnabled;
     }
 
-    public Object getVariable(String name) {
-        throw new IllegalArgumentException("Unknown variable: " + name);
-    }
-
-    public void setVariable(String name, Object value) {
-        throw new IllegalArgumentException("Unknown variable: " + name);
-    }
-
     public abstract void enter();
 
     public abstract void leave();
