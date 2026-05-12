@@ -1,44 +1,23 @@
 package samples.abro;
 
-import samples.abro.interfaces.State;
+import samples.abro.abstract_base_classes.State;
 
-public class SimpleState implements State {
-    private final State parentState;
+public class SimpleState extends State {
+
     private final boolean _isFinal;
 
-    public SimpleState(State parentState, boolean isFinal) {
-        this.parentState = parentState;
+    public SimpleState( boolean isFinal) {
         this._isFinal = isFinal;
     }
 
     @Override
     public Object getVariable(String name) {
-        return parentState.getVariable(name);
+        throw new IllegalArgumentException("Unknown variable: " + name);
     }
 
     @Override
     public void setVariable(String name, Object value) {
-        parentState.setVariable(name, value);
-    }
-
-    @Override
-    public void enter() {
-        // No entry actions
-    }
-
-    @Override
-    public void leave() {
-        // No exit actions
-    }
-
-    @Override
-    public void tick() {
-        // No internal behavior
-    }
-
-    @Override
-    public void reset() {
-        // No reset actions
+        throw new IllegalArgumentException("Unknown variable: " + name);
     }
 
     @Override
@@ -49,6 +28,21 @@ public class SimpleState implements State {
     @Override
     public boolean isTerminated() {
         return false;
+    }
+
+    @Override
+    public void enter() {
+        // Do nothing
+    }
+
+    @Override
+    public void leave() {
+        // Do nothing
+    }
+
+    @Override
+    public void tick() {
+        // Do nothing
     }
 
 }
