@@ -1,28 +1,27 @@
 package samples.abro;
 
 import samples.abro.abstract_base_classes.State;
+
+import samples.abro.abstract_base_classes.LocalAction;
 import samples.abro.abstract_base_classes.Region;
 
 public class ABRO extends State {
     private boolean A, B, R, O;
 
-    private final Region Root;
-
     public ABRO() {
-        this.Root = new Root();
+        super();
+        addRegions(new Root());
+        reset();
     }
+
     public Object getVariable(String name) {
-        switch (name) {
-            case "A":
-                return A;
-            case "B":
-                return B;
-            case "R":
-                return R;
-            case "O":
-                return O;
-        }
-        throw new IllegalArgumentException("Unknown variable: " + name);
+        return switch (name) {
+            case "A" -> A;
+            case "B" -> B;
+            case "R" -> R;
+            case "O" -> O;
+            default -> throw new IllegalArgumentException("Unknown variable: " + name);
+        };
     }
 
     public void setVariable(String name, Object value) {
@@ -45,36 +44,16 @@ public class ABRO extends State {
     }
 
     @Override
-    public void enter() {
-        Root.enter();
-    }
-
-    @Override
-    public void leave() {
-        Root.leave();
-    }
-
-    @Override
-    public void tick() {
-        Root.tick();
-    }
-
-    @Override
     public void reset() {
-        setDelayEnabled(false);
-        Root.reset();
+        A = B = R = O = false;
+        super.reset();
     }
+
 
     @Override
     public boolean isFinal() {
         return false;
     }
-
-    @Override
-    public boolean isTerminated() {
-        return Root.isTerminated();
-    }
-
 
     class Root extends Region {
 
@@ -87,22 +66,15 @@ public class ABRO extends State {
 
         @Override
         public void tick() {
-            boolean tickAgain = true;
-            while (tickAgain) {
-                tickAgain = false;
-                if (activeState.equals(ABO)) {
-                    if (activeState.isDelayEnabled() && R) {
-                        activeState.leave();
-                        // no effect
-                        activeState = ABO;
-                        ABO.reset();
-                        ABO.enter();
-                        tickAgain = true;
-                        continue;
-                    }
+            if (activeState.equals(ABO)) {
+                if (activeState.isDelayEnabled() && R) {
+                    transitionTo(ABO);
+                    // TODO: this is probably not really the intended behavior.
+                    //       The intended behavior is that delay are enabled at the end of each tick. We could try a try-finally block?
+                    return;
                 }
-                activeState.tick();
             }
+            activeState.tick();
 
             activeState.setDelayEnabled(true);
         }
@@ -115,41 +87,14 @@ public class ABRO extends State {
 
         class ABO extends State {
 
-            private final Region Wait;
-
             public ABO() {
-                this.Wait = new Wait();
-            }
-
-            @Override
-            public void enter() {
-                O = false;
-                Wait.enter();
-            }
-
-            public void leave() {
-                Wait.leave();
-                // no exit actions
-            }
-
-            @Override
-            public void tick() {
-                Wait.tick();
-            }
-
-            @Override
-            public void reset() {
-                setDelayEnabled(false);
-                Wait.reset();
+                super();
+                addRegions(new Wait());
+                addEntryActions(new LocalAction(() -> true, () -> {O = false;}));
             }
 
             public boolean isFinal() {
                 return false;
-            }
-
-            @Override
-            public boolean isTerminated() {
-                return Wait.isTerminated();
             }
 
             class Wait extends Region {
@@ -164,22 +109,13 @@ public class ABRO extends State {
 
                 @Override
                 public void tick() {
-                    boolean tickAgain = true;
-                    while (tickAgain) {
-                        tickAgain = false;
-                        // No strong abort
-                        activeState.tick();
-                        // weak abort check
-                        if (activeState.equals(WaitAB)) {
-                            if (activeState.isTerminated()) {
-                                activeState.leave();
-                                O = true;
-                                activeState = Done;
-                                Done.reset();
-                                Done.enter();
-                                tickAgain = true;
-                                continue;
-                            }
+                    // No strong abort
+                    activeState.tick();
+                    // weak abort check
+                    if (activeState.equals(WaitAB)) {
+                        if (activeState.isTerminated()) {
+                            transitionTo(Done, () -> {O = true;});
+                            return;
                         }
                     }
                     activeState.setDelayEnabled(true);
@@ -194,48 +130,14 @@ public class ABRO extends State {
 
                 class WaitAB extends State {
 
-                    private final Region HandleA, HandleB;
-
                     public WaitAB() {
-                        this.HandleA = new HandleA();
-                        this.HandleB = new HandleB();
+                        super();
+                        addRegions(new HandleA(), new HandleB());
                     }
 
                     @Override
                     public boolean isFinal() {
                         return false;
-                    }
-
-                    @Override
-                    public boolean isTerminated() {
-                        return HandleA.isTerminated() && HandleB.isTerminated();
-                    }
-
-                    @Override
-                    public void enter() {
-                        // no entry actions
-                        HandleA.enter();
-                        HandleB.enter();
-                    }
-
-                    @Override
-                    public void leave() {
-                        HandleA.leave();
-                        HandleB.leave();
-                        // no exit actions
-                    }
-
-                    @Override
-                    public void tick() {
-                        HandleA.tick();
-                        HandleB.tick();
-                    }
-
-                    @Override
-                    public void reset() {
-                        setDelayEnabled(false);
-                        HandleA.reset();
-                        HandleB.reset();
                     }
 
 
@@ -251,20 +153,13 @@ public class ABRO extends State {
 
                         @Override
                         public void tick() {
-                            boolean tickAgain = true;
-                            while (tickAgain) {
-                                activeState.tick();
+                            activeState.tick();
 
-                                if (activeState.equals(WaitA)) {
-                                    if (activeState.isDelayEnabled() && A) {
-                                        activeState.leave();
-                                        activeState = DoneA;
-                                        DoneA.reset();
-                                        DoneA.enter();
-                                        continue;
-                                    }
+                            if (activeState.equals(WaitA)) {
+                                if (activeState.isDelayEnabled() && A) {
+                                    transitionTo(DoneA);
+                                    return;
                                 }
-                                tickAgain = false;
                             }
 
                             activeState.setDelayEnabled(true);
@@ -274,6 +169,7 @@ public class ABRO extends State {
                         public void reset() {
                             activeState = WaitA;
                             WaitA.reset();
+                            DoneA.reset();
                         }
                     }
 
@@ -289,40 +185,22 @@ public class ABRO extends State {
 
                         @Override
                         public void tick() {
-                            boolean tickAgain = true;
-                            while (tickAgain) {
+                            activeState.tick();
 
-                                activeState.tick();
-
-                                if (activeState.equals(WaitB)) {
-                                    if (activeState.isDelayEnabled() && B) {
-                                        activeState.leave();
-                                        activeState = DoneB;
-                                        DoneB.reset();
-                                        DoneB.enter();
-                                        continue;
-                                    }
+                            if (activeState.equals(WaitB)) {
+                                if (activeState.isDelayEnabled() && B) {
+                                    transitionTo(DoneB);
+                                    return;
                                 }
-
-                                tickAgain = false;
                             }
                             activeState.setDelayEnabled(true);
-                        }
-
-                        @Override
-                        public void enter() {
-                            activeState.enter();
-                        }
-
-                        @Override
-                        public void leave() {
-                            activeState.leave();
                         }
 
                         @Override
                         public void reset() {
                             activeState = WaitB;
                             WaitB.reset();
+                            DoneB.reset();
                         }
                     }
                 }

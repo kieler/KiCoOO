@@ -6,7 +6,8 @@ public class SimpleState extends State {
 
     private final boolean _isFinal;
 
-    public SimpleState( boolean isFinal) {
+    public SimpleState(boolean isFinal) {
+        super();
         this._isFinal = isFinal;
     }
 
