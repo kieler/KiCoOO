@@ -1,55 +1,26 @@
 package samples.abro;
 
 import samples.abro.abstract_base_classes.State;
+
+import java.util.List;
+
 import samples.abro.abstract_base_classes.Region;
 
 public class ABRO extends State {
-    private boolean A, B, R, O;
+    public boolean A, B, R, O;
 
     public ABRO() {
-        super();
-        setRegions(new Root());
+        super(false);
+        this.regions = List.of(new Root());
         reset();
     }
 
-    public Object getVariable(String name) {
-        return switch (name) {
-            case "A" -> A;
-            case "B" -> B;
-            case "R" -> R;
-            case "O" -> O;
-            default -> throw new IllegalArgumentException("Unknown variable: " + name);
-        };
-    }
-
-    public void setVariable(String name, Object value) {
-        switch (name) {
-            case "A":
-                A = (boolean) value;
-                break;
-            case "B":
-                B = (boolean) value;
-                break;
-            case "R":
-                R = (boolean) value;
-                break;
-            case "O":
-                O = (boolean) value;
-                break;
-            default:
-                throw new IllegalArgumentException("Unknown variable: " + name);
-        }
-    }
-
     @Override
-    public void reset() {
-        A = B = R = O = false;
-        super.reset();
-    }
-
-    @Override
-    public boolean isFinal() {
-        return false;
+    public void localReset() {
+        A = false;
+        B = false;
+        R = false;
+        O = false;
     }
 
     class Root extends Region {
@@ -58,13 +29,14 @@ public class ABRO extends State {
 
         public Root() {
             this.ABO = new ABO();
-            this.reset();
+            this.initialState = ABO;
+            this.states = List.of(ABO);
         }
 
         @Override
-        public boolean doStrongAborts() {
+        public boolean didStrongAborts() {
             if (activeState.equals(ABO)) {
-                if (activeState.isDelayEnabled() && R) {        // if R abort to ABO
+                if (delayedEnabled && R) { // if R abort to ABO
                     transitionTo(ABO);
                     return true;
                 }
@@ -72,27 +44,16 @@ public class ABRO extends State {
             return false;
         }
 
-        @Override
-        public void reset() {
-            activeState = ABO;
-            ABO.reset();
-        }
-
         class ABO extends State {
 
             public ABO() {
-                super();
-                setRegions(new Wait());
-            }
-
-            @Override
-            public boolean isFinal() {
-                return false;
+                super(false);
+                this.regions = List.of(new Wait());
             }
 
             @Override
             public void onEntry() {
-                O = false;          // entry do O = false
+                O = false; // entry do O = false
             }
 
             class Wait extends Region {
@@ -101,38 +62,28 @@ public class ABRO extends State {
 
                 public Wait() {
                     this.WaitAB = new WaitAB();
-                    this.Done = new SimpleState(false);
-                    reset();
+                    this.Done = new State(false);
+
+                    this.initialState = WaitAB;
+                    this.states = List.of(WaitAB, Done);
                 }
 
                 @Override
-                public boolean doWeakAborts() {
+                public boolean didWeakAborts() {
                     if (activeState.equals(WaitAB)) {
-                        if (activeState.isTerminated()) {           // do O = true join to Done
-                            transitionTo(Done, () -> {O = true;});
+                        if (activeState.isTerminated()) { // do O = true join to Done
+                            transitionTo(Done, () -> { O = true; });
                             return true;
                         }
                     }
                     return false;
                 }
 
-                @Override
-                public void reset() {
-                    activeState = WaitAB;
-                    WaitAB.reset();
-                    Done.reset();
-                }
-
                 class WaitAB extends State {
 
                     public WaitAB() {
-                        super();
-                        setRegions(new HandleA(), new HandleB());
-                    }
-
-                    @Override
-                    public boolean isFinal() {
-                        return false;
+                        super(false);
+                        this.regions = List.of(new HandleA(), new HandleB());
                     }
 
                     class HandleA extends Region {
@@ -140,27 +91,22 @@ public class ABRO extends State {
                         private final State WaitA, DoneA;
 
                         public HandleA() {
-                            this.WaitA = new SimpleState(false);
-                            this.DoneA = new SimpleState(true);
-                            reset();
+                            this.WaitA = new State(false);
+                            this.DoneA = new State(true);
+
+                            this.initialState = WaitA;
+                            this.states = List.of(WaitA, DoneA);
                         }
 
                         @Override
-                        public boolean doWeakAborts() {
+                        public boolean didWeakAborts() {
                             if (activeState.equals(WaitA)) {
-                                if (activeState.isDelayEnabled() && A) {    // if A go to DoneA
+                                if (this.delayedEnabled && A) { // if A go to DoneA
                                     transitionTo(DoneA);
                                     return true;
                                 }
                             }
                             return false;
-                        }
-
-                        @Override
-                        public void reset() {
-                            activeState = WaitA;
-                            WaitA.reset();
-                            DoneA.reset();
                         }
                     }
 
@@ -169,33 +115,26 @@ public class ABRO extends State {
                         private final State WaitB, DoneB;
 
                         public HandleB() {
-                            this.WaitB = new SimpleState(false);
-                            this.DoneB = new SimpleState(true);
-                            reset();
+                            this.WaitB = new State(false);
+                            this.DoneB = new State(true);
+
+                            this.initialState = WaitB;
+                            this.states = List.of(WaitB, DoneB);
                         }
 
                         @Override
-                        public boolean doWeakAborts() {
+                        public boolean didWeakAborts() {
                             if (activeState.equals(WaitB)) {
-                                if (activeState.isDelayEnabled() && B) {   // if B go to DoneB
+                                if (this.delayedEnabled && B) { // if B go to DoneB
                                     transitionTo(DoneB);
                                     return true;
                                 }
                             }
                             return false;
                         }
-
-                        @Override
-                        public void reset() {
-                            activeState = WaitB;
-                            WaitB.reset();
-                            DoneB.reset();
-                        }
                     }
                 }
             }
-
         }
-
     }
 }

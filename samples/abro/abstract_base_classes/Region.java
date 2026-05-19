@@ -1,8 +1,14 @@
 package samples.abro.abstract_base_classes;
 
-public abstract class Region {
+import java.util.List;
 
-    protected State activeState;
+public class Region {
+
+    protected boolean delayedEnabled = false;
+    protected State activeState = null;
+
+    protected List<State> states = List.of();
+    protected State initialState = null;
 
     public void enter() {
         activeState.enter();
@@ -24,41 +30,50 @@ public abstract class Region {
         activeState = newState;
         activeState.reset();
         activeState.enter();
+        this.delayedEnabled = false;
     }
 
-    // TODO: this could also be part of the State interface, but then we would need to return some kind of "transition result" object that indicates whether a transition was taken, and if so, which state we transitioned to.
-    // Also the state would then need to have a reference to the states it can transition to.
+    // TODO: this could also be part of the State interface, but then we would need
+    // to return some kind of "transition result" object that indicates whether a
+    // transition was taken, and if so, which state we transitioned to.
+    // Also the state would then need to have a reference to the states it can
+    // transition to.
     /**
-     * Check for strong aborts and perform the first one that is enabled. Return true if a transition was taken, false otherwise.
+     * Check for strong aborts and perform the first one that is enabled. Return
+     * true if a transition was taken, false otherwise.
+     * 
      * @return true if a transition was taken, false otherwise
      */
-    public boolean doStrongAborts() {
+    public boolean didStrongAborts() {
         // default implementation does nothing
         return false;
     }
 
     /**
-     * Check for weak aborts and perform the first one that is enabled. Return true if a transition was taken, false otherwise.
+     * Check for weak aborts and perform the first one that is enabled. Return true
+     * if a transition was taken, false otherwise.
+     * 
      * @return true if a transition was taken, false otherwise
      */
-    public boolean doWeakAborts() {
+    public boolean didWeakAborts() {
         // default implementation does nothing
         return false;
     }
 
     public void tick() {
-        boolean transitioned = doStrongAborts();
-        if (transitioned) {
-            return;     // TODO: is this correct? If we do a strong abort, should we enable delay for the new active state immediately, or should we wait until the next tick?
+        boolean transitioned = didStrongAborts();
+        if (!transitioned) {
+            activeState.tick();
+            transitioned = didWeakAborts();
         }
-        activeState.tick();
-        transitioned = doWeakAborts();
-        if (transitioned) {
-            return;
-        }
-        activeState.setDelayEnabled(true);
+        this.delayedEnabled = true;
     }
 
-    abstract public void reset();
+    public void reset() {
+        activeState = initialState;
+        for (State state : states) {
+            state.reset();
+        }
+    }
 
 }

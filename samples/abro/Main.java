@@ -5,7 +5,7 @@ import java.util.Scanner;
 public class Main {
     public static void main(String[] args) {
         ABRO abro = new ABRO();
-        
+
         try (Scanner scanner = new Scanner(System.in)) {
             while (true) {
                 System.out.println("Enter command (A, B, R, O, tick, reset, exit):");
@@ -19,7 +19,7 @@ public class Main {
                     case "TICK":
                     case "":
                         abro.tick();
-                        System.out.format("Current state: A=%s, B=%s, R=%s, O=%s%n", abro.getVariable("A"), abro.getVariable("B"), abro.getVariable("R"), abro.getVariable("O"));
+                        System.out.format("Current state: A=%s, B=%s, R=%s, O=%s%n", abro.A, abro.B, abro.R, abro.O);
                         break;
                     case "RESET":
                         abro.reset();
@@ -28,10 +28,20 @@ public class Main {
                     case "B":
                     case "R":
                         boolean boolValue = Boolean.parseBoolean(arg);
-                        abro.setVariable(verb, boolValue);
+                        switch (verb) {
+                            case "A":
+                                abro.A = boolValue;
+                                break;
+                            case "B":
+                                abro.B = boolValue;
+                                break;
+                            case "R":
+                                abro.R = boolValue;
+                                break;
+                        }
                         break;
                     case "O":
-                        System.out.println("Output O: " + abro.getVariable("O"));
+                        System.out.println("Output O: " + abro.O);
                         break;
                     default:
                         System.out.println("Unknown command.");

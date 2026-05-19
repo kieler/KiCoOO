@@ -4,16 +4,8 @@ import samples.abro.abstract_base_classes.State;
 
 public class SimpleState extends State {
 
-    private final boolean _isFinal;
-
     public SimpleState(boolean isFinal) {
-        super();
-        this._isFinal = isFinal;
-    }
-
-    @Override
-    public boolean isFinal() {
-        return _isFinal;
+        super(isFinal);
     }
 
     @Override

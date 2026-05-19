@@ -2,25 +2,14 @@ package samples.abro.abstract_base_classes;
 
 import java.util.List;
 
-public abstract class State {
-    private boolean delayEnabled = false;
+public class State {
+    private final boolean _isFinal;
 
-    private List<Region> regions;
+    protected List<Region> regions;
 
-    public State() {
+    public State(boolean isFinal) {
+        this._isFinal = isFinal;
         this.regions = List.of();
-    }
-
-    public void setRegions(Region ...regions) {
-        this.regions = List.of(regions);
-    }
-
-    public boolean isDelayEnabled() {
-        return delayEnabled;
-    }
-
-    public void setDelayEnabled(boolean delayEnabled) {
-        this.delayEnabled = delayEnabled;
     }
 
     public void onEntry() {
@@ -30,12 +19,12 @@ public abstract class State {
     public void onTick() {
         // default implementation does nothing
     }
-    
+
     public void onExit() {
         // default implementation does nothing
     }
 
-    public void enter(){
+    public void enter() {
         this.onEntry();
         for (Region region : regions) {
             region.enter();
@@ -57,8 +46,12 @@ public abstract class State {
 
     }
 
+    public void localReset() {
+        // default implementation does nothing
+    }
+
     public void reset() {
-        delayEnabled = false;
+        localReset();
         for (Region region : regions) {
             region.reset();
         }
@@ -67,6 +60,8 @@ public abstract class State {
     public boolean isTerminated() {
         return regions.stream().allMatch(Region::isTerminated);
     }
-    
-    public abstract boolean isFinal();
+
+    public boolean isFinal() {
+        return _isFinal;
+    }
 }
