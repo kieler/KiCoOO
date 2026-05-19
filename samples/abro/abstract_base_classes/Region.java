@@ -26,7 +26,38 @@ public abstract class Region {
         activeState.enter();
     }
 
-    abstract public void tick();
+    // TODO: this could also be part of the State interface, but then we would need to return some kind of "transition result" object that indicates whether a transition was taken, and if so, which state we transitioned to.
+    // Also the state would then need to have a reference to the states it can transition to.
+    /**
+     * Check for strong aborts and perform the first one that is enabled. Return true if a transition was taken, false otherwise.
+     * @return true if a transition was taken, false otherwise
+     */
+    public boolean doStrongAborts() {
+        // default implementation does nothing
+        return false;
+    }
+
+    /**
+     * Check for weak aborts and perform the first one that is enabled. Return true if a transition was taken, false otherwise.
+     * @return true if a transition was taken, false otherwise
+     */
+    public boolean doWeakAborts() {
+        // default implementation does nothing
+        return false;
+    }
+
+    public void tick() {
+        boolean transitioned = doStrongAborts();
+        if (transitioned) {
+            return;     // TODO: is this correct? If we do a strong abort, should we enable delay for the new active state immediately, or should we wait until the next tick?
+        }
+        activeState.tick();
+        transitioned = doWeakAborts();
+        if (transitioned) {
+            return;
+        }
+        activeState.setDelayEnabled(true);
+    }
 
     abstract public void reset();
 

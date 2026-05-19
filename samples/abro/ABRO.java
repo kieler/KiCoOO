@@ -1,8 +1,6 @@
 package samples.abro;
 
 import samples.abro.abstract_base_classes.State;
-
-import samples.abro.abstract_base_classes.LocalAction;
 import samples.abro.abstract_base_classes.Region;
 
 public class ABRO extends State {
@@ -10,7 +8,7 @@ public class ABRO extends State {
 
     public ABRO() {
         super();
-        addRegions(new Root());
+        setRegions(new Root());
         reset();
     }
 
@@ -49,7 +47,6 @@ public class ABRO extends State {
         super.reset();
     }
 
-
     @Override
     public boolean isFinal() {
         return false;
@@ -65,18 +62,14 @@ public class ABRO extends State {
         }
 
         @Override
-        public void tick() {
+        public boolean doStrongAborts() {
             if (activeState.equals(ABO)) {
-                if (activeState.isDelayEnabled() && R) {
+                if (activeState.isDelayEnabled() && R) {        // if R abort to ABO
                     transitionTo(ABO);
-                    // TODO: this is probably not really the intended behavior.
-                    //       The intended behavior is that delay are enabled at the end of each tick. We could try a try-finally block?
-                    return;
+                    return true;
                 }
             }
-            activeState.tick();
-
-            activeState.setDelayEnabled(true);
+            return false;
         }
 
         @Override
@@ -89,12 +82,17 @@ public class ABRO extends State {
 
             public ABO() {
                 super();
-                addRegions(new Wait());
-                addEntryActions(new LocalAction(() -> true, () -> {O = false;}));
+                setRegions(new Wait());
             }
 
+            @Override
             public boolean isFinal() {
                 return false;
+            }
+
+            @Override
+            public void onEntry() {
+                O = false;          // entry do O = false
             }
 
             class Wait extends Region {
@@ -108,17 +106,14 @@ public class ABRO extends State {
                 }
 
                 @Override
-                public void tick() {
-                    // No strong abort
-                    activeState.tick();
-                    // weak abort check
+                public boolean doWeakAborts() {
                     if (activeState.equals(WaitAB)) {
-                        if (activeState.isTerminated()) {
+                        if (activeState.isTerminated()) {           // do O = true join to Done
                             transitionTo(Done, () -> {O = true;});
-                            return;
+                            return true;
                         }
                     }
-                    activeState.setDelayEnabled(true);
+                    return false;
                 }
 
                 @Override
@@ -132,14 +127,13 @@ public class ABRO extends State {
 
                     public WaitAB() {
                         super();
-                        addRegions(new HandleA(), new HandleB());
+                        setRegions(new HandleA(), new HandleB());
                     }
 
                     @Override
                     public boolean isFinal() {
                         return false;
                     }
-
 
                     class HandleA extends Region {
 
@@ -152,17 +146,14 @@ public class ABRO extends State {
                         }
 
                         @Override
-                        public void tick() {
-                            activeState.tick();
-
+                        public boolean doWeakAborts() {
                             if (activeState.equals(WaitA)) {
-                                if (activeState.isDelayEnabled() && A) {
+                                if (activeState.isDelayEnabled() && A) {    // if A go to DoneA
                                     transitionTo(DoneA);
-                                    return;
+                                    return true;
                                 }
                             }
-
-                            activeState.setDelayEnabled(true);
+                            return false;
                         }
 
                         @Override
@@ -184,16 +175,14 @@ public class ABRO extends State {
                         }
 
                         @Override
-                        public void tick() {
-                            activeState.tick();
-
+                        public boolean doWeakAborts() {
                             if (activeState.equals(WaitB)) {
-                                if (activeState.isDelayEnabled() && B) {
+                                if (activeState.isDelayEnabled() && B) {   // if B go to DoneB
                                     transitionTo(DoneB);
-                                    return;
+                                    return true;
                                 }
                             }
-                            activeState.setDelayEnabled(true);
+                            return false;
                         }
 
                         @Override
