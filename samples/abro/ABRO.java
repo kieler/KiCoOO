@@ -1,9 +1,7 @@
 package samples.abro;
 
-import samples.abro.abstract_base_classes.State;
-
 import java.util.List;
-
+import samples.abro.abstract_base_classes.State;
 import samples.abro.abstract_base_classes.Region;
 
 public class ABRO extends State {

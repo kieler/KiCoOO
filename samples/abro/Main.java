@@ -1,52 +1,100 @@
 package samples.abro;
 
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStreamReader;
 import java.util.Scanner;
+import mjson.Json;
 
 public class Main {
-    public static void main(String[] args) {
-        ABRO abro = new ABRO();
 
-        try (Scanner scanner = new Scanner(System.in)) {
-            while (true) {
-                System.out.println("Enter command (A, B, R, O, tick, reset, exit):");
-                String[] command = scanner.nextLine().trim().split(" ");
-                var verb = command[0].toUpperCase();
-                var arg = command.length > 1 ? command[1] : null;
+    public static ABRO model = new ABRO();
 
-                switch (verb) {
-                    case "EXIT":
-                        return;
-                    case "TICK":
-                    case "":
-                        abro.tick();
-                        System.out.format("Current state: A=%s, B=%s, R=%s, O=%s%n", abro.A, abro.B, abro.R, abro.O);
-                        break;
-                    case "RESET":
-                        abro.reset();
-                        break;
-                    case "A":
-                    case "B":
-                    case "R":
-                        boolean boolValue = Boolean.parseBoolean(arg);
-                        switch (verb) {
-                            case "A":
-                                abro.A = boolValue;
-                                break;
-                            case "B":
-                                abro.B = boolValue;
-                                break;
-                            case "R":
-                                abro.R = boolValue;
-                                break;
-                        }
-                        break;
-                    case "O":
-                        System.out.println("Output O: " + abro.O);
-                        break;
-                    default:
-                        System.out.println("Unknown command.");
-                }
+    private static long _tickstart;
+private static long _ticktime;
+
+    
+    public static BufferedReader stdInReader = new BufferedReader(new InputStreamReader(System.in));
+            
+    private static void receiveVariables() {
+        try {
+            String line = stdInReader.readLine();
+            Json json = Json.read(line);
+            
+            // Receive A
+            if (json.has("A")) {
+                model.A = json.at("A").asBoolean();
             }
+            // Receive B
+            if (json.has("B")) {
+                model.B = json.at("B").asBoolean();
+            }
+            // Receive R
+            if (json.has("R")) {
+                model.R = json.at("R").asBoolean();
+            }
+            // Receive O
+            if (json.has("O")) {
+                model.O = json.at("O").asBoolean();
+            }
+            // Receive #ticktime
+            if (json.has("#ticktime")) {
+                _ticktime = json.at("#ticktime").asLong();
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+        } catch (Json.MalformedJsonException e) {
+           // Ignore other input
+        }
+    }
+    
+    private static void sendVariables() {
+        Json json = Json.object();
+        
+        // Send A
+        json.set("A", model.A);
+        // Send B
+        json.set("B", model.B);
+        // Send R
+        json.set("R", model.R);
+        // Send O
+        json.set("O", model.O);
+        // Send #ticktime
+        json.set("#ticktime", _ticktime);
+        
+        System.out.println(json.toString());
+    }
+    
+    public static void main(String[] args) {
+        
+        
+        // Initialize 
+        model.reset();
+        
+        sendVariables();
+
+        
+        while (true) {
+            
+        
+           // Read inputs
+           receiveVariables();
+
+           
+           _tickstart = System.nanoTime();
+
+        
+           // Reaction of model
+           model.tick();
+           
+           _ticktime = System.nanoTime() - _tickstart;
+
+           
+           // Send outputs
+           sendVariables();
+
+           
+           
         }
     }
 }
