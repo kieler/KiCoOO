@@ -11,7 +11,7 @@ public class Main {
     public static ABRO model = new ABRO();
 
     private static long _tickstart;
-private static long _ticktime;
+    private static long _ticktime;
 
     
     public static BufferedReader stdInReader = new BufferedReader(new InputStreamReader(System.in));
@@ -19,6 +19,11 @@ private static long _ticktime;
     private static void receiveVariables() {
         try {
             String line = stdInReader.readLine();
+            if (line == null) {
+                // End of input stream, exit the program
+                System.out.println("End of input stream detected. Exiting.");
+                System.exit(0);
+            }
             Json json = Json.read(line);
             
             // Receive A

@@ -1,1 +1,1 @@
-# KiCoOO - Kieler Compiler for Object-Oriented languages
+# KiCoOO - Kieler Compiler for generating Object-Oriented languages
