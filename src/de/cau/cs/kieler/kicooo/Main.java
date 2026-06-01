@@ -2,12 +2,11 @@
 package de.cau.cs.kieler.kicooo;
 
 import java.io.FileNotFoundException;
-import java.io.FileOutputStream;
+import java.io.PrintStream;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.stream.Collectors;
 
 import mjson.Json;
@@ -27,7 +26,6 @@ public class Main {
      */
     public static void main(String[] args) {
         System.out.println("KiCoOO - Kieler Compiler for generating Object-Oriented languages");
-        System.out.println("This is a placeholder for the main method.");
 
         Path outputFolder = Paths.get(args[0], PACKAGE);
 
@@ -43,8 +41,107 @@ public class Main {
             String jsonString = new String(System.in.readAllBytes());
             Json json = Json.read(jsonString);
             processRootState(json.at(0), outputFolder);
+            createMainClass(json.at(0), outputFolder);
         } catch (Exception e) {
             System.err.println("Error parsing JSON: " + e.getMessage());
+        }
+    }
+
+    private static void createMainClass(Json json, Path outputFolder) {
+        var filePath = outputFolder.resolve("Main.java");
+        String className = getStateName(json);
+
+        var variables = Utils.getJsonListByKey(json, "variables").orElse(List.of());
+
+        try (var output = new PrintStream(filePath.toFile())) {
+            output.format("package %s;\n\n", PACKAGE);
+            for (var imp : List.of(
+                    "java.io.BufferedReader",
+                    "java.io.IOException",
+                    "java.io.InputStreamReader",
+                    "mjson.Json")) {
+                output.format("import %s;\n", imp);
+            }
+            output.println();
+            output.println("public class Main {\n");
+            output.format("    public static %s model = new %s(false);\n\n", className, className);
+            output.println("    private static long _tickstart;");
+            output.println("    private static long _ticktime;\n");
+            output.println("    public static BufferedReader stdInReader = new BufferedReader(new InputStreamReader(System.in));");
+            
+            outputMethodStart(output, "", "static void", "receiveVariables", "");
+            output.println("        try {");
+            output.println("            String line = stdInReader.readLine();");
+            output.println("            if (line == null) {");
+            output.println("                // End of input stream, exit the program");
+            output.println("                System.err.println(\"End of input stream detected. Exiting.\");");
+            output.println("                System.exit(0);");
+            output.println("            }");
+            output.println("            Json json = Json.read(line);");
+            output.println();
+            for (var variable : variables) {
+                String varName = Utils.getJsonStringByKey(variable, "id").orElseThrow(() -> new IllegalArgumentException("Variable is missing required 'id' field."));
+                String varType = Utils.getJsonStringByKey(variable, "type").orElse("Object");
+                String getterMethod = switch (varType) {
+                    case "int" -> "asInt";
+                    case "bool" -> "asBoolean";
+                    case "string" -> "asString";
+                    default -> "asJson"; // TODO: Handle unknown types more gracefully, e.g., by generating a custom class or throwing an error.
+                };
+                output.format("            // Receive %s\n", varName);
+                output.format("            if (json.has(\"%s\")) {\n", varName);
+                output.format("                model.%s = json.at(\"%s\").%s();\n", varName, varName, getterMethod);
+                output.format("            }\n");
+            }
+            output.format("            // Receive #ticktime\n");
+            output.format("            if (json.has(\"#ticktime\")) {\n");
+            output.format("                _ticktime = json.at(\"#ticktime\").asLong();\n");
+            output.format("            }\n");
+            output.println("        } catch (IOException e) {");
+            output.println("            e.printStackTrace();");
+            output.println("        } catch (Json.MalformedJsonException e) {");
+            output.println("           // Ignore other input");
+            output.println("        }\n");
+            output.println("    }");
+
+            outputMethodStart(output, "", "static void", "sendVariables", "");
+            output.println("        Json json = Json.object();");
+            for (var variable : variables) {
+                String varName = Utils.getJsonStringByKey(variable, "id").orElseThrow(() -> new IllegalArgumentException("Variable is missing required 'id' field."));
+                output.format("        // Send %s\n", varName);
+                output.format("        json.set(\"%s\", model.%s);\n", varName, varName);
+            }
+            output.println("        // Send #ticktime");
+            output.println("        json.set(\"#ticktime\", _ticktime);");
+            output.println("        System.out.println(json.toString());");
+            output.println("    }\n");
+
+            outputMethodStart(output, "", "static void", "main", "String[] args");
+
+            output.println("        model.reset();");
+            output.println("        sendVariables();");
+
+            output.println("        while (true) {");
+            output.println("            // Read inputs");
+            output.println("            receiveVariables();");
+            output.println();
+            output.println("            _tickstart = System.nanoTime();");
+            output.println("            // Reaction of model");
+            output.println("            model.tick();");
+            output.println("            _ticktime = System.nanoTime() - _tickstart;");
+            output.println();
+            output.println("            // Send outputs");
+            output.println("            sendVariables();");
+
+            output.println("        }");
+
+            output.println("    }");
+
+            output.println("}");
+        } catch (FileNotFoundException e) {
+            System.err.println("Error writing file: " + e.getMessage());
+        } catch (Exception e) {
+            System.err.println("Unexpected error: " + e.getMessage());
         }
     }
 
@@ -53,71 +150,75 @@ public class Main {
     }
 
     private static void processRootState(Json json, Path outputFolder) {
-        // Create a string builder for the boilerplate content, then pass it to processState and processRegion to fill in the details.
-        var output = new StringBuilder();
-
-        output.append(String.format("package %s;\n\n", PACKAGE));
-        output.append("import java.util.List;\n");
-        output.append(String.format("import %s.%s.State;\n", PACKAGE, BASE_CLASS_PACKAGE));
-        output.append(String.format("import %s.%s.Region;\n", PACKAGE, BASE_CLASS_PACKAGE));
-        output.append("\n");
-
-        processState(json, output, 0, "public ");
-
-        // Afterwards, write the content to the output folder as an appropriately named .java file.
-        String id = Optional.ofNullable(json.at("id")).map(Json::asString).orElse(null);
-        String className = formatClassName(id);
-
+        String className = getStateName(json);
         var filePath = outputFolder.resolve(className + ".java");
-        try (var outputStream = new FileOutputStream(filePath.toFile())) {
-            outputStream.write(output.toString().getBytes());
-            System.out.println("Generated file: " + filePath);
+
+        // Create a PrintStream for the boilerplate content, then pass it to processState and processRegion to fill in the details.
+        try (var output = new PrintStream(filePath.toFile())) {
+            output.format("package %s;\n\n", PACKAGE);
+            output.print("import java.util.List;\n");
+            output.format("import %s.%s.State;\n", PACKAGE, BASE_CLASS_PACKAGE);
+            output.format("import %s.%s.Region;\n", PACKAGE, BASE_CLASS_PACKAGE);
+            output.append("\n");
+
+            processState(json, output, 0, "public ");
+
         } catch (FileNotFoundException e) {
             System.err.println("Error writing file: " + e.getMessage());
         } catch (Exception e) {
             System.err.println("Unexpected error: " + e.getMessage());
         }
+
+        // Afterwards, write the content to the output folder as an appropriately named .java file.
+        // try (var outputStream = new FileOutputStream(filePath.toFile())) {
+        //     outputStream.write(output.toString().getBytes());
+        //     System.out.println("Generated file: " + filePath);
+        // } catch (FileNotFoundException e) {
+        //     System.err.println("Error writing file: " + e.getMessage());
+        // } catch (Exception e) {
+        //     System.err.println("Unexpected error: " + e.getMessage());
+        // }
     }
 
-    private static void processState(Json json, StringBuilder output, int indentLevel, String classPrefix) {
+    private static void processState(Json json, PrintStream output, int indentLevel, String classPrefix) {
         // Placeholder for the compilation logic
         System.out.println("Processing state: " + json.at("id").toString());
 
-        String id = Optional.ofNullable(json.at("id")).map(Json::asString).orElse(null);
-        String label = Optional.ofNullable(json.at("label")).map(Json::asString).orElse(null);
-        List<Json> variables = Optional.ofNullable(json.at("variables")).map(Json::asJsonList).orElse(List.of());
-        List<Json> regions = Optional.ofNullable(json.at("regions")).map(Json::asJsonList).orElse(List.of());
+        String id = Utils.getJsonStringByKey(json, "id").orElseThrow(() -> new IllegalArgumentException("State is missing required 'id' field."));
+        String label = Utils.getJsonStringByKey(json, "label").orElse(id);
+        List<Json> variables = Utils.getJsonListByKey(json, "variables").orElse(List.of());
+        List<Json> regions = Utils.getJsonListByKey(json, "regions").orElse(List.of());
 
-        List<Json> actions = Optional.ofNullable(json.at("actions")).map(Json::asJsonList).orElse(List.of());
-        List<Json> entryActions = actions.stream().filter(action -> Optional.ofNullable(action.at("type")).map(Json::asString).orElse("").equals("entry")).toList();
-        List<Json> exitActions = actions.stream().filter(action -> Optional.ofNullable(action.at("type")).map(Json::asString).orElse("").equals("exit")).toList();
-        List<Json> duringActions = actions.stream().filter(action -> Optional.ofNullable(action.at("type")).map(Json::asString).orElse("").equals("during")).toList();
+        List<Json> actions = Utils.getJsonListByKey(json, "actions").orElseThrow(() -> new IllegalArgumentException("State is missing required 'actions' field."));
+        List<Json> entryActions = actions.stream()
+            .filter(action -> ActionType.fromJsonAction(action).equals(ActionType.ENTRY))
+            .toList();
+        List<Json> exitActions = actions.stream()
+            .filter(action -> ActionType.fromJsonAction(action).equals(ActionType.EXIT))
+            .toList();
+        List<Json> duringActions = actions.stream()
+            .filter(action -> ActionType.fromJsonAction(action).equals(ActionType.DURING))
+            .toList();
 
         List<String> regionNames = regions.stream()
-                .map(region -> Optional.ofNullable(region.at("id")).map(Json::asString).orElse(null))
-                .map(Main::formatClassName)
+                .map(region -> Utils.getJsonStringByKey(region, "id").orElse(null))
+                .map(Utils::formatClassName)
                 .toList();
 
-        if (id == null) {
-            // TODO: Handle missing ID more gracefully, e.g., by generating a unique ID.
-            System.err.println("State is missing 'id' field.");
-            return;
-        }
-
-        String className = formatClassName(id);
+        String className = getStateName(json);
         String indent = "    ".repeat(indentLevel);
 
-        output.append(String.format("\n%s%sclass %s extends State {\n\n", indent, classPrefix, className));
+        output.format("\n%s%sclass %s extends State {\n\n", indent, classPrefix, className);
         // Debug
-        // output.append(String.format("%s    // Label: %s\n", indent, label));
-        // output.append(String.format("%s    // ID: %s\n", indent, id));
-        // output.append(String.format("%s    // Regions: %d\n", indent, regions.size()));
+        output.format("%s    // Label: %s\n", indent, label);
+        // output.format("%s    // ID: %s\n", indent, id));
+        // output.format("%s    // Regions: %d\n", indent, regions.size()));
 
         for (Json variable : variables) {
-            String varName = Optional.ofNullable(variable.at("id")).map(Json::asString).orElse(null);
-            String varType = Optional.ofNullable(variable.at("type")).map(Json::asString).map(Main::sctxTypeToJavaType).orElse("Object");
+            String varName = Utils.getJsonStringByKey(variable, "id").orElseThrow(() -> new IllegalArgumentException("Variable is missing required 'id' field."));
+            String varType = Utils.getJsonStringByKey(variable, "type").map(Main::sctxTypeToJavaType).orElse("Object");
             if (varName != null) {
-                output.append(String.format("%s    public %s %s;\n", indent, varType, varName));
+                output.format("%s    public %s %s;\n", indent, varType, varName);
             }
         }
         if (!variables.isEmpty()) {
@@ -125,134 +226,129 @@ public class Main {
         }
 
         // add a constructor that initializes the regions and sets the final flag of the state
-        output.append(String.format("%s    public %s(boolean isFinal) {\n", indent, className));
-        output.append(String.format("%s        super(isFinal);\n", indent));
+        output.format("%s    public %s(boolean isFinal) {\n", indent, className);
+        output.format("%s        super(isFinal);\n", indent);
         if (!regionNames.isEmpty()) {
-            output.append(String.format("%s        this.regions = List.of(%s);\n", indent, regionNames.stream().map(name -> "new " + name + "()").collect(Collectors.joining(", "))));
+            output.format("%s        this.regions = List.of(%s);\n", indent, regionNames.stream().map(name -> "new " + name + "()").collect(Collectors.joining(", ")));
         }
-        output.append(String.format("%s    }\n", indent, ""));
-
+        output.format("%s    }\n", indent, "");
         if (!variables.isEmpty()) {
             outputMethodStart(output, indent, "void", "localReset", "");
             for (Json variable : variables) {
-                String varName = Optional.ofNullable(variable.at("id")).map(Json::asString).orElse(null);
-                String varType = Optional.ofNullable(variable.at("type")).map(Json::asString).map(Main::sctxTypeToJavaType).orElse("Object");
+                String varName = Utils.getJsonStringByKey(variable, "id").orElseThrow(() -> new IllegalArgumentException("Variable is missing required 'id' field."));
+                String varType = Utils.getJsonStringByKey(variable, "type").map(Main::sctxTypeToJavaType).orElse("Object");
                 String defaultValue = switch (varType) {
                     case "int" -> "0";
                     case "boolean" -> "false";
                     case "String" -> "\"\"";
                     default -> "null";
                 };
-                String initialValue = Optional.ofNullable(variable.at("initialValue")).map(Json::asString).orElse(defaultValue);
-                output.append(String.format("%s        %s = %s;\n", indent, varName, initialValue));
+                String initialValue = Utils.getJsonStringByKey(variable, "initialValue").orElse(defaultValue);
+                output.format("%s        %s = %s;\n", indent, varName, initialValue);
             }
-            output.append(String.format("%s    }\n", indent));
+            output.format("%s    }\n", indent);
         }
 
         if (!entryActions.isEmpty()) {
             outputMethodStart(output, indent, "void", "onEntry", "");
-            for (Json action : entryActions) {
-                String guard = Optional.ofNullable(action.at("guard")).map(Json::asString).orElse("");
-                String effect = Optional.ofNullable(action.at("action")).map(Json::asString).orElse("");
-                if (!guard.isEmpty()) {
-                    output.append(String.format("%s        if (%s) {\n", indent, guard));
-                    output.append(String.format("%s            %s;\n", indent, effect));
-                    output.append(String.format("%s        }\n", indent));
-                } else {
-                    output.append(String.format("%s        %s;\n", indent, effect));
-                }
-            }
-            output.append(String.format("%s    }\n", indent));
+            processEntryExitActions(output, entryActions, indent);
+            output.format("%s    }\n", indent);
         }
 
         if (!duringActions.isEmpty()) {
             outputMethodStart(output, indent, "void", "onTick", "");
             for (Json action : duringActions) {
-                String guard = Optional.ofNullable(action.at("guard")).map(Json::asString).orElse("");
-                String effect = Optional.ofNullable(action.at("action")).map(Json::asString).orElse("");
-                boolean isImmediate = Optional.ofNullable(action.at("isImmediate")).map(Json::asBoolean).orElse(false);
+                String guard = Utils.getJsonStringByKey(action, "guard").orElse(null);
+                String effect = Utils.getJsonStringByKey(action, "action").orElse("");
+                boolean isImmediate = Utils.getJsonStringByKey(action, "isImmediate").map(Boolean::parseBoolean).orElse(false);
 
                 if (!isImmediate) {
-                    guard = guard.isEmpty() ? "delayedEnabled" : "delayedEnabled && (" + guard + ")";
+                    guard = guard == null ? "delayedEnabled" : "delayedEnabled && (" + guard + ")";
                 }
 
-                if (!guard.isEmpty()) {
-                    output.append(String.format("%s        if (%s) {\n", indent, guard));
-                    output.append(String.format("%s            %s;\n", indent, effect));
-                    output.append(String.format("%s        }\n", indent));
+                if (guard != null) {
+                    output.format("%s        if (%s) {\n", indent, guard);
+                    output.format("%s            %s;\n", indent, effect);
+                    output.format("%s        }\n", indent);
                 } else {
-                    output.append(String.format("%s        %s;\n", indent, effect));
+                    output.format("%s        %s;\n", indent, effect);
                 }
             }
-            output.append(String.format("%s    }\n", indent));
+            output.format("%s    }\n", indent);
         }
 
         if (!exitActions.isEmpty()) {
             outputMethodStart(output, indent, "void", "onExit", "");
-            for (Json action : exitActions) {
-                String guard = Optional.ofNullable(action.at("guard")).map(Json::asString).orElse("");
-                String effect = Optional.ofNullable(action.at("action")).map(Json::asString).orElse("");
-                if (!guard.isEmpty()) {
-                    output.append(String.format("%s        if (%s) {\n", indent, guard));
-                    output.append(String.format("%s            %s;\n", indent, effect));
-                    output.append(String.format("%s        }\n", indent));
-                } else {
-                    output.append(String.format("%s        %s;\n", indent, effect));
-                }
-            }
-            output.append(String.format("%s    }\n", indent));
+            processEntryExitActions(output, exitActions, indent);
+            output.format("%s    }\n", indent);
         }
 
         for (Json region : regions) {
             processRegion(region, output, indentLevel + 1, "");
         }
 
-        output.append(String.format("%s}\n", indent, ""));
+        output.format("%s}\n", indent, "");
 
     }
 
-    private static void outputMethodStart(StringBuilder output, String indent, String methodReturnType, String methodName,
+    private static void processEntryExitActions(PrintStream output, List<Json> actions, String indent) {
+        for (Json action : actions) {
+            var guard = Utils.getJsonStringByKey(action, "guard");
+            var effect = Utils.getJsonStringByKey(action, "action").orElseThrow(() -> new IllegalArgumentException("Action is missing required 'action' field."));
+
+            guard.ifPresentOrElse(
+                (g) -> {
+                    output.format("%s        if (%s) {\n", indent, g);
+                    output.format("%s            %s;\n", indent, effect);
+                    output.format("%s        }\n", indent);
+                }, () -> {
+                    output.format("%s        %s;\n", indent, effect);
+                }
+            );
+        }
+    }
+
+    private static void outputMethodStart(PrintStream output, String indent, String methodReturnType, String methodName,
             String methodArgs) {
-        output.append(String.format("\n%s    @Override\n", indent));
-        output.append(String.format("%s    public %s %s(%s) {\n", indent, methodReturnType, methodName, methodArgs));
+        // output.format("\n%s    @Override\n", indent);
+        output.format("\n%s    public %s %s(%s) {\n", indent, methodReturnType, methodName, methodArgs);
     }
 
     private static boolean isComplexState(Json state) {
-        boolean hasActions = !Optional.ofNullable(state.at("actions")).map(Json::asJsonList).map(List::isEmpty).orElse(true);
-        boolean hasRegions = !Optional.ofNullable(state.at("regions")).map(Json::asJsonList).map(List::isEmpty).orElse(true);
+        boolean hasActions = !Utils.getJsonListByKey(state, "actions").map(List::isEmpty).orElse(true);
+        boolean hasRegions = !Utils.getJsonListByKey(state, "regions").map(List::isEmpty).orElse(true);
         return hasActions || hasRegions;
     }
 
-    private static void processRegion(Json json, StringBuilder output, int indentLevel, String classPrefix) {
+    private static void processRegion(Json json, PrintStream output, int indentLevel, String classPrefix) {
         System.out.println("Processing region: " + json.at("id").toString());
 
-        String id = Optional.ofNullable(json.at("id")).map(Json::asString).orElse(null);
-        String label = Optional.ofNullable(json.at("label")).map(Json::asString).orElse(null);
-        List<Json> states = Optional.ofNullable(json.at("states")).map(Json::asJsonList).orElse(List.of());
-        var complexStates = states.stream().filter(state -> isComplexState(state)).toList();
+        String id = Utils.getJsonStringByKey(json, "id").orElseThrow(() -> new IllegalArgumentException("Region is missing required 'id' field."));
+        String label = Utils.getJsonStringByKey(json, "label").orElse(id);
+        List<Json> states = Utils.getJsonListByKey(json, "states").orElse(List.of());
+        var complexStates = states.stream().filter(Main::isComplexState).toList();
 
         // var stateNames = states.stream()
         //         .map(state -> Optional.ofNullable(state.at("id")).map(Json::asString).orElse(null))
         //         .map(Main::formatClassName)
         //         .toList();
         var initialStateName = states.stream()
-                .filter(state -> Optional.ofNullable(state.at("isInitial")).map(Json::asBoolean).orElse(false))
+                .filter(state -> Utils.getJsonBooleanByKey(state, "isInitial").orElse(false))
                 .findFirst()
-                .map(state -> Optional.ofNullable(state.at("id")).map(Json::asString).orElse(null))
-                .map(Main::formatClassName);
+                .map(Main::getStateName);
 
         var weakTransitions = states.stream()
                 .collect(Collectors.toMap(
                     state -> getStateName(state),
                     state -> state.at("transitions").asJsonList().stream()
-                        .filter(transition -> !Optional.ofNullable(transition.at("preemption")).map(Json::asString).equals(Optional.of("strong"))).toList()
+                        .filter(transition -> !PreemptionType.fromJsonTransition(transition).isStrong()).toList()
                 ));
 
         var strongTransitions = states.stream()
                 .collect(Collectors.toMap(
                     state -> getStateName(state),
                     state -> state.at("transitions").asJsonList().stream()
-                        .filter(transition -> Optional.ofNullable(transition.at("preemption")).map(Json::asString).equals(Optional.of("strong"))).toList()
+                        .filter(transition -> PreemptionType.fromJsonTransition(transition).isStrong()).toList()
                 ));
 
         if (id == null) {
@@ -261,81 +357,81 @@ public class Main {
             return;
         }
 
-        String className = formatClassName(id);
+        String className = Utils.formatClassName(id);
         String indent = "    ".repeat(indentLevel);
 
-        output.append(String.format("\n%s%sclass %s extends Region {\n", indent, classPrefix, className));
+        output.format("\n%s%sclass %s extends Region {\n", indent, classPrefix, className);
         // Debug
-        // output.append(String.format("%s    // Label: %s\n", indent, label));
-        // output.append(String.format("%s    // ID: %s\n", indent, id));
-        // output.append(String.format("%s    // States: %d\n", indent, states.size()));
-        // output.append(String.format("%s// Strong Abort Transitions: %s\n", indent, strongTransitions.toString()));
-        // output.append(String.format("%s// Weak Abort Transitions: %s\n", indent, weakTransitions.toString()));
+        output.format("%s    // Label: %s\n", indent, label);
+        // output.format("%s    // ID: %s\n", indent, id));
+        // output.format("%s    // States: %d\n", indent, states.size()));
+        // output.format("%s// Strong Abort Transitions: %s\n", indent, strongTransitions.toString()));
+        // output.format("%s// Weak Abort Transitions: %s\n", indent, weakTransitions.toString());
 
         for (var state : states) {
             var stateName = getStateName(state);
-            output.append(String.format("%s    private final State %s;\n", indent, stateName));
+            output.format("%s    private final State %s;\n", indent, stateName);
         }
 
         output.append("\n");
         // add a constructor that initializes the states and sets the initial state
-        output.append(String.format("%s    public %s() {\n", indent, className));
+        output.format("%s    public %s() {\n", indent, className);
         for (var state : states) {
             var stateName = getStateName(state);
             var stateClassName = isComplexState(state) ? stateName : "State";
             var isFinal = isStateFinal(state);
-            output.append(String.format("%s        this.%s = new %s(%b);\n", indent, stateName, stateClassName, isFinal));
+            output.format("%s        this.%s = new %s(%b);\n", indent, stateName, stateClassName, isFinal);
         }
         output.append("\n");
-        output.append(String.format("%s        this.initialState = %s;\n", indent, initialStateName.orElse(null)));
-        output.append(String.format("%s        this.states = List.of(%s);\n", indent, states.stream().map(Main::getStateName).collect(Collectors.joining(", "))));
-        output.append(String.format("%s    }\n", indent));
+        output.format("%s        this.initialState = %s;\n", indent, initialStateName.orElse(null));
+        output.format("%s        this.states = List.of(%s);\n", indent, states.stream().map(Main::getStateName).collect(Collectors.joining(", ")));
+        output.format("%s    }\n", indent);
 
 
         // process all strong abort transitions if there are any
         if (strongTransitions.values().stream().anyMatch(list -> !list.isEmpty())) {
             outputMethodStart(output, indent, "boolean", "didStrongAborts", "");
             processTransitonMap(output, strongTransitions, indent);
-            output.append(String.format("%s        return false;\n", indent));
-            output.append(String.format("%s    }\n", indent));
+            output.format("%s        return false;\n", indent);
+            output.format("%s    }\n", indent);
         }
 
         // process all weak abort transitions if there are any
         if (weakTransitions.values().stream().anyMatch(list -> !list.isEmpty())) {
             outputMethodStart(output, indent, "boolean", "didWeakAborts", "");
             processTransitonMap(output, weakTransitions, indent);
-            output.append(String.format("%s        return false;\n", indent));
-            output.append(String.format("%s    }\n", indent));
+            output.format("%s        return false;\n", indent);
+            output.format("%s    }\n", indent);
         }
 
         for (Json state : complexStates) {
             processState(state, output, indentLevel + 1, "");
         }
 
-        output.append(String.format("%s}\n", indent));
+        output.format("%s}\n", indent);
     }
 
     private static Boolean isStateFinal(Json state) {
-        return Optional.ofNullable(state.at("isFinal")).map(Json::asBoolean).orElse(false);
+        return Utils.getJsonBooleanByKey(state, "isFinal").orElse(false);
     }
 
     private static String getStateName(Json state) {
-        return Optional.ofNullable(state.at("id")).map(Json::asString).map(Main::formatClassName).orElse(null);
+        return Utils.getJsonStringByKey(state, "id").map(Utils::formatClassName).orElseThrow(() -> new IllegalArgumentException("State is missing required 'id' field."));
     }
 
-    private static void processTransitonMap(StringBuilder output, Map<String, List<Json>> transitionMap, String indent) {
+    private static void processTransitonMap(PrintStream output, Map<String, List<Json>> transitionMap, String indent) {
         for (var entry : transitionMap.entrySet()) {
             String stateName = entry.getKey();
             List<Json> transitions = entry.getValue();
             if (!transitions.isEmpty()) {
-                output.append(String.format("%s        if (activeState.equals(%s)) {\n", indent, stateName));
+                output.format("%s        if (activeState.equals(%s)) {\n", indent, stateName);
                 for (Json transition : transitions) {
-                    String guard = Optional.ofNullable(transition.at("guard")).map(Json::asString).orElse("");
-                    String target = Optional.ofNullable(transition.at("targetID")).map(Json::asString).map(Main::formatClassName).orElse(null);
-                    String effect = Optional.ofNullable(transition.at("action")).map(Json::asString).orElse("");
+                    String guard = Utils.getJsonStringByKey(transition, "guard").orElse("");
+                    String target = Utils.getJsonStringByKey(transition, "targetID").map(Utils::formatClassName).orElse(null);
+                    String effect = Utils.getJsonStringByKey(transition, "action").orElse("");
 
-                    boolean isImmediate = Optional.ofNullable(transition.at("isImmediate")).map(Json::asBoolean).orElse(false);
-                    boolean isTermination = Optional.ofNullable(transition.at("preemption")).map(Json::asString).map(preemption -> preemption.equals("termination")).orElse(false);
+                    boolean isImmediate = Utils.getJsonBooleanByKey(transition, "isImmediate").orElse(false);
+                    boolean isTermination = PreemptionType.fromJsonTransition(transition).isTermination();
 
                     if (isTermination) {
                         guard = guard.isEmpty() ? "activeState.isTerminated()" : "activeState.isTerminated() && (" + guard + ")";
@@ -345,30 +441,19 @@ public class Main {
 
                     if (target != null) {
                         if (!guard.isEmpty()) {
-                            output.append(String.format("%s            if (%s) { \n", indent, guard));
-                            output.append(String.format("%s                transitionTo(%s%s);\n", indent, target, effect.isEmpty() ? "" : ", () -> { " + effect + "; }"));
-                            output.append(String.format("%s                return true;\n", indent));
-                            output.append(String.format("%s            }\n", indent));
+                            output.format("%s            if (%s) { \n", indent, guard);
+                            output.format("%s                transitionTo(%s%s);\n", indent, target, effect.isEmpty() ? "" : ", () -> { " + effect + "; }");
+                            output.format("%s                return true;\n", indent);
+                            output.format("%s            }\n", indent);
                         } else {
-                            output.append(String.format("%s            transitionTo(%s); // strong abort\n", indent, target));
-                            output.append(String.format("%s            return true;\n", indent));
+                            output.format("%s            transitionTo(%s); // strong abort\n", indent, target);
+                            output.format("%s            return true;\n", indent);
                         }
                     }
                 }
-                output.append(String.format("%s        }\n", indent));
+                output.format("%s        }\n", indent);
             }
         }
-    }
-
-    private static String uppercaseFirst(String str) {
-        if (str == null || str.isEmpty()) {
-            return str;
-        }
-        return str.substring(0, 1).toUpperCase() + str.substring(1);
-    }
-
-    private static String formatClassName(String id) {
-        return uppercaseFirst(id.replaceAll("[^a-zA-Z0-9]", "_"));
     }
 
     private static String sctxTypeToJavaType(String sctxType) {
@@ -378,5 +463,53 @@ public class Main {
             case "string" -> "String";
             default -> "Object"; // TODO: Handle unknown types more gracefully, e.g., by generating a custom class or throwing an error.
         };
+    }
+}
+
+enum PreemptionType {
+    STRONG,
+    WEAK,
+    TERMINATION;
+
+    static PreemptionType fromString(String type) {
+        return switch (type.toLowerCase()) {
+            case "strong" -> STRONG;
+            case "weak" -> WEAK;
+            case "termination" -> TERMINATION;
+            default -> throw new IllegalArgumentException("Unknown preemption type: " + type);
+        };
+    }
+
+    public static PreemptionType fromJsonTransition(Json transition) {
+        String preemptionStr = Utils.getJsonStringByKey(transition, "preemption").orElse("weak"); // Default to weak if not specified
+        return fromString(preemptionStr);
+    }
+
+    public boolean isTermination() {
+        return this == TERMINATION;
+    }
+
+    public boolean isStrong() {
+        return this == STRONG;
+    }
+}
+
+enum ActionType {
+    ENTRY,
+    EXIT,
+    DURING;
+
+    static ActionType fromString(String type) {
+        return switch (type.toLowerCase()) {
+            case "entry" -> ENTRY;
+            case "exit" -> EXIT;
+            case "during" -> DURING;
+            default -> throw new IllegalArgumentException("Unknown action type: " + type);
+        };
+    }
+
+    static ActionType fromJsonAction(Json action) {
+        String typeStr = Utils.getJsonStringByKey(action, "type").orElseThrow(() -> new IllegalArgumentException("Action is missing required 'type' field."));
+        return fromString(typeStr);
     }
 }
