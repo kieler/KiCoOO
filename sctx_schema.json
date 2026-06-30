@@ -59,14 +59,20 @@
                 "isFinal": {
                     "type": "boolean"
                 },
+                "isConnector": {
+                    "type": "boolean"
+                },
                 "regions": {
                     "type": "array",
                     "items": {
                         "$ref": "#/$defs/region"
                     }
+                },
+                "reference": {
+                    "$ref": "#/$defs/reference"
                 }
             },
-            "required": ["id", "actions", "variables", "transitions", "isInitial", "isFinal", "regions"]
+            "required": ["id", "actions", "variables", "transitions", "isInitial", "isFinal", "isConnector", "regions"]
         },
         "transition": {
             "type": "object",
@@ -133,6 +139,24 @@
                 }
             },
             "required": ["type", "isImmediate", "action"]
+        },
+        "reference": {
+            "type": "object",
+            "properties": {
+                "targetID": {
+                    "type": "string"
+                },
+                "targetFile": {
+                    "type": "string"
+                },
+                "parameters": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            },
+            "required": ["targetID", "parameters"]
         }
     }
 }
