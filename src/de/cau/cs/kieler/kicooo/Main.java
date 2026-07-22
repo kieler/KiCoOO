@@ -83,7 +83,7 @@ public class Main {
                 String varName = Utils.getJsonStringByKey(variable, "id").orElseThrow(() -> new IllegalArgumentException("Variable is missing required 'id' field."));
                 String varType = Utils.getJsonStringByKey(variable, "type").orElse("Object");
                 String getterMethod = switch (varType) {
-                    case "int" -> "asInt";
+                    case "int" -> "asInteger";
                     case "bool" -> "asBoolean";
                     case "string" -> "asString";
                     default -> "asJson"; // TODO: Handle unknown types more gracefully, e.g., by generating a custom class or throwing an error.
@@ -141,7 +141,7 @@ public class Main {
         } catch (FileNotFoundException e) {
             System.err.println("Error writing file: " + e.getMessage());
         } catch (Exception e) {
-            System.err.println("Unexpected error: " + e.getMessage());
+            e.printStackTrace();
         }
     }
 
@@ -159,6 +159,7 @@ public class Main {
             output.print("import java.util.List;\n");
             output.format("import %s.%s.State;\n", PACKAGE, BASE_CLASS_PACKAGE);
             output.format("import %s.%s.Region;\n", PACKAGE, BASE_CLASS_PACKAGE);
+            output.format("import %s.%s.InstantaneousRegion;\n", PACKAGE, BASE_CLASS_PACKAGE);
             output.append("\n");
 
             processState(json, output, 0, "public ");
@@ -166,7 +167,7 @@ public class Main {
         } catch (FileNotFoundException e) {
             System.err.println("Error writing file: " + e.getMessage());
         } catch (Exception e) {
-            System.err.println("Unexpected error: " + e.getMessage());
+            e.printStackTrace();
         }
 
         // Afterwards, write the content to the output folder as an appropriately named .java file.
@@ -176,7 +177,7 @@ public class Main {
         // } catch (FileNotFoundException e) {
         //     System.err.println("Error writing file: " + e.getMessage());
         // } catch (Exception e) {
-        //     System.err.println("Unexpected error: " + e.getMessage());
+        //     e.printStackTrace();
         // }
     }
 
@@ -260,7 +261,7 @@ public class Main {
             for (Json action : duringActions) {
                 String guard = Utils.getJsonStringByKey(action, "guard").orElse(null);
                 String effect = Utils.getJsonStringByKey(action, "action").orElse("");
-                boolean isImmediate = Utils.getJsonStringByKey(action, "isImmediate").map(Boolean::parseBoolean).orElse(false);
+                boolean isImmediate = Utils.getJsonBooleanByKey(action, "isImmediate").orElse(false);
 
                 if (!isImmediate) {
                     guard = guard == null ? "delayedEnabled" : "delayedEnabled && (" + guard + ")";
@@ -351,16 +352,15 @@ public class Main {
                         .filter(transition -> PreemptionType.fromJsonTransition(transition).isStrong()).toList()
                 ));
 
-        if (id == null) {
-            // TODO: Handle missing ID more gracefully, e.g., by generating a unique ID.
-            System.err.println("Region is missing an ID.");
-            return;
-        }
+        var hasImmediateTransitions = states.stream()
+                .flatMap(state -> state.at("transitions").asJsonList().stream())
+                .anyMatch(transition -> Utils.getJsonBooleanByKey(transition, "isImmediate").orElse(false));
 
         String className = Utils.formatClassName(id);
+        var superClassName = hasImmediateTransitions ? "InstantaneousRegion" : "Region";
         String indent = "    ".repeat(indentLevel);
 
-        output.format("\n%s%sclass %s extends Region {\n", indent, classPrefix, className);
+        output.format("\n%s%sclass %s extends %s {\n", indent, classPrefix, className, superClassName);
         // Debug
         output.format("%s    // Label: %s\n", indent, label);
         // output.format("%s    // ID: %s\n", indent, id));
@@ -390,7 +390,7 @@ public class Main {
 
         // process all strong abort transitions if there are any
         if (strongTransitions.values().stream().anyMatch(list -> !list.isEmpty())) {
-            outputMethodStart(output, indent, "boolean", "didStrongAborts", "");
+            outputMethodStart(output, indent, "boolean", "handlePreemptiveTransitions", "");
             processTransitonMap(output, strongTransitions, indent);
             output.format("%s        return false;\n", indent);
             output.format("%s    }\n", indent);
@@ -398,7 +398,7 @@ public class Main {
 
         // process all weak abort transitions if there are any
         if (weakTransitions.values().stream().anyMatch(list -> !list.isEmpty())) {
-            outputMethodStart(output, indent, "boolean", "didWeakAborts", "");
+            outputMethodStart(output, indent, "boolean", "handleNonPreemptiveTransitions", "");
             processTransitonMap(output, weakTransitions, indent);
             output.format("%s        return false;\n", indent);
             output.format("%s    }\n", indent);
@@ -436,7 +436,7 @@ public class Main {
                     if (isTermination) {
                         guard = guard.isEmpty() ? "activeState.isTerminated()" : "activeState.isTerminated() && (" + guard + ")";
                     } else if (!isImmediate) {
-                        guard = guard.isEmpty() ? "delayedEnabled" : "delayedEnabled && (" + guard + ")";
+                        guard = guard.isEmpty() ? "activeState.delayedEnabled" : "activeState.delayedEnabled && (" + guard + ")";
                     }
 
                     if (target != null) {
