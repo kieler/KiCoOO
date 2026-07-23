@@ -442,17 +442,25 @@ public class Main {
                     if (target != null) {
                         if (!guard.isEmpty()) {
                             output.format("%s            if (%s) { \n", indent, guard);
-                            output.format("%s                transitionTo(%s%s);\n", indent, target, effect.isEmpty() ? "" : ", () -> { " + effect + "; }");
+                            output.format("%s                %s;\n", indent, buildTransitionCommand(target, effect));
                             output.format("%s                return true;\n", indent);
                             output.format("%s            }\n", indent);
                         } else {
-                            output.format("%s            transitionTo(%s); // strong abort\n", indent, target);
+                            output.format("%s            %s;\n", indent, buildTransitionCommand(target, effect));
                             output.format("%s            return true;\n", indent);
                         }
                     }
                 }
                 output.format("%s        }\n", indent);
             }
+        }
+    }
+
+    private static String buildTransitionCommand(String target, String effect) {
+        if (effect.isEmpty()) {
+            return String.format("transitionTo(%s)", target);
+        } else {
+            return String.format("transitionTo(%s, () -> { %s; })", target, effect);
         }
     }
 

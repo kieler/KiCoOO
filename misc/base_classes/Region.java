@@ -10,7 +10,7 @@ public class Region {
     protected State initialState = null;
 
     public void enter() {
-        activeState.enter();
+        // activeState.enter();
     }
 
     public void leave() {
@@ -22,7 +22,9 @@ public class Region {
     }
 
     protected void transitionTo(State newState, Runnable... transitionActions) {
-        activeState.leave();
+        if (activeState != null) {
+            activeState.leave();
+        }
         for (Runnable action : transitionActions) {
             action.run();
         }
@@ -60,16 +62,25 @@ public class Region {
     }
 
     public void tick() {
+        if (activeState == null) {
+            transitionTo(initialState);
+        }
+
         boolean transitioned = handlePreemptiveTransitions();
         if (!transitioned) {
             activeState.tick();
             transitioned = handleNonPreemptiveTransitions();
+            if (transitioned) {
+                // tick the new active state if a transition was taken, to allow for immediate transitions and to ensure that
+                // delayed transitions are allowed in the next tick.
+                activeState.tick();
+            }
         }
         activeState.delayedEnabled = true;
     }
 
     public void reset() {
-        activeState = initialState;
+        activeState = null;
         for (State state : states) {
             state.reset();
         }

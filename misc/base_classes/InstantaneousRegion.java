@@ -4,6 +4,9 @@ public abstract class InstantaneousRegion extends Region {
 
     @Override
     public void tick() {
+        if (activeState == null) {
+            transitionTo(initialState);
+        }
         // This region has instantaneous transitions, so we might do multiple
         // transitions in a single tick. We will keep ticking until we reach a stable
         // state (i.e., no more transitions).
