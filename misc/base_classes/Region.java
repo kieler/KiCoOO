@@ -10,11 +10,15 @@ public class Region {
     protected State initialState = null;
 
     public void enter() {
-        // activeState.enter();
+        if (activeState != null) {
+            activeState.enter();
+        }
     }
 
     public void leave() {
-        activeState.leave();
+        if (activeState != null) {
+            activeState.leave();
+        }
     }
 
     public boolean isTerminated() {

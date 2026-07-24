@@ -1,0 +1,79 @@
+{
+    "$id": "https://rtsys.informatik.uni-kiel.de/trace_schema.json",
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "KTrace Schema",
+    "description": "A JSON schema for exchanging KTraces between implementations.",
+    "type": "array",
+    "items": {
+        "$ref": "#/definitions/trace"
+    },
+    "definitions": {
+        "trace": {
+            "type": "object",
+            "properties": {
+                "ticks": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/tick"
+                    }
+                }
+            },
+            "required": ["ticks"]
+        },
+        "tick": {
+            "type": "object",
+            "properties": {
+                "inputs": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/assignment"
+                    }
+                },
+                "outputs": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/assignment"
+                    }
+                },
+                "id": {
+                    "type": "string"
+                },
+                "gotoID": {
+                    "type": "string"
+                }
+            },
+            "required": ["inputs", "outputs"]
+        },
+        "assignment": {
+            "type": "object",
+            "properties": {
+                "variableID": {
+                    "type": "string"
+                },
+                "value": {
+                    "anyOf": [
+                        {
+                            "$ref": "#/definitions/signal"
+                        },
+                        {
+                            "type": ["string", "number", "boolean", "null", "array"]
+                        }
+                    ]
+                }
+            },
+            "required": ["variableID", "value"]
+        },
+        "signal": {
+            "type": "object",
+            "properties": {
+                "present": {
+                    "const": true
+                },
+                "value": {
+                    "type": ["string", "number", "boolean", "null", "array"]
+                }
+            },
+            "required": ["present"]
+        }
+    }
+}
