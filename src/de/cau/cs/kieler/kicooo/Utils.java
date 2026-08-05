@@ -30,4 +30,8 @@ public class Utils {
         return uppercaseFirst(id.replaceAll("[^a-zA-Z0-9]", "_"));
     }
 
+    static String indent(int level) {
+        return "    ".repeat(level);
+    }
+
 }

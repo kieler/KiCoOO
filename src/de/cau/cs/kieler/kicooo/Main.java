@@ -7,6 +7,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
 import mjson.Json;
@@ -29,6 +30,8 @@ public class Main {
 
         Path outputFolder = Paths.get(args[0], PACKAGE);
 
+        boolean generateMainClass = !(args.length > 1 && args[1].equals("--no-main"));
+
         // Create output directory if it doesn't exist
         if (!outputFolder.toFile().exists()) {
             outputFolder.toFile().mkdirs();
@@ -37,11 +40,28 @@ public class Main {
         // Create State and Region interfaces
         createStaticFiles(outputFolder);
 
+        // Load the JSON schema for validation
+        Json.Schema schema;
+        try (var inputStream = Main.class.getResourceAsStream("/sctx_schema.json")) {
+            schema = Json.schema(Json.read(new String(inputStream.readAllBytes())));
+        } catch (Exception e) {
+            System.err.println("Error reading JSON Schema: " + e.getMessage());
+            return;
+        }
+
         try {
             String jsonString = new String(System.in.readAllBytes());
             Json json = Json.read(jsonString);
+            var validation_result = schema.validate(json);
+            if (!validation_result.at("ok").asBoolean()) {
+                System.err.println("Validation errors:");
+                validation_result.at("errors").forEach(System.err::println);
+                return;
+            }
             processRootState(json.at(0), outputFolder);
-            createMainClass(json.at(0), outputFolder);
+            if (generateMainClass) {
+                createMainClass(json.at(0), outputFolder);
+            }
         } catch (Exception e) {
             System.err.println("Error parsing JSON: " + e.getMessage());
         }
@@ -67,47 +87,87 @@ public class Main {
             output.format("    public static %s model = new %s(false);\n\n", className, className);
             output.println("    private static long _tickstart;");
             output.println("    private static long _ticktime;\n");
-            output.println("    public static BufferedReader stdInReader = new BufferedReader(new InputStreamReader(System.in));");
-            
-            outputMethodStart(output, "", "static void", "receiveVariables", "");
-            output.println("        try {");
-            output.println("            String line = stdInReader.readLine();");
-            output.println("            if (line == null) {");
-            output.println("                // End of input stream, exit the program");
-            output.println("                System.err.println(\"End of input stream detected. Exiting.\");");
-            output.println("                System.exit(0);");
-            output.println("            }");
-            output.println("            Json json = Json.read(line);");
-            output.println();
-            for (var variable : variables) {
-                String varName = Utils.getJsonStringByKey(variable, "id").orElseThrow(() -> new IllegalArgumentException("Variable is missing required 'id' field."));
-                String varType = Utils.getJsonStringByKey(variable, "type").orElse("Object");
-                String getterMethod = switch (varType) {
-                    case "int" -> "asInteger";
-                    case "bool" -> "asBoolean";
-                    case "string" -> "asString";
-                    default -> "asJson"; // TODO: Handle unknown types more gracefully, e.g., by generating a custom class or throwing an error.
-                };
-                output.format("            // Receive %s\n", varName);
-                output.format("            if (json.has(\"%s\")) {\n", varName);
-                output.format("                model.%s = json.at(\"%s\").%s();\n", varName, varName, getterMethod);
-                output.format("            }\n");
+            output.println(
+                    "    public static BufferedReader stdInReader = new BufferedReader(new InputStreamReader(System.in));");
+
+            try (var method = new Method(output, 0, "static void", "receiveVariables", "", false)) {
+                method.addLine("try {");
+                method.addLine("    String line = stdInReader.readLine();");
+                method.addLine("    if (line == null) {");
+                method.addLine("        // End of input stream, exit the program");
+                method.addLine("        System.err.println(\"End of input stream detected. Exiting.\");");
+                method.addLine("        System.exit(0);");
+                method.addLine("    }");
+                method.addLine("    Json json = Json.read(line);");
+                method.addLine("");
+                for (var variable : variables) {
+                    String varName = Utils.getJsonStringByKey(variable, "id").orElseThrow(
+                            () -> new IllegalArgumentException("Variable is missing required 'id' field."));
+                    String varType = Utils.getJsonStringByKey(variable, "type").orElse("Object");
+                    List<Integer> arrayDimensions = Utils.getJsonListByKey(variable, "cardinalities")
+                            .map(list -> list.stream().map(Json::asInteger).toList()).orElse(List.of());
+                    String getterMethod = switch (varType) {
+                        case "int" -> "asInteger";
+                        case "bool" -> "asBoolean";
+                        case "string" -> "asString";
+                        default -> "asJson"; // TODO: Handle unknown types more gracefully, e.g., by generating a custom
+                                             // class or throwing an error.
+                    };
+                    method.formatLine("    // Receive %s", varName);
+                    method.formatLine("    if (json.has(\"%s\")) {", varName);
+                    if (arrayDimensions.isEmpty()) {
+                        // Scalar value
+                        method.formatLine("        model.%s = json.at(\"%s\").%s();", varName, varName, getterMethod);
+                    } else {
+                        // Array value
+                        // TODO: make this work nice with the method thingy
+                        var mappingFunction = switch (varType) {
+                            case "int" -> "mapToInt";
+                            case "bool" -> "mapToBoolean";
+                            case "string" -> "map";
+                            default -> "map";
+                        };
+                        output.format("%smodel.%s = json.at(\"%s\").asJsonList().stream()\n", Utils.indent(4), varName,
+                                varName);
+                        for (int i = 1; i < arrayDimensions.size(); i++) {
+                            output.format("%s.map(item%d -> item%d.asJsonList().stream()\n", Utils.indent(4 + i), i, i);
+                        }
+                        output.format("%s.%s(item -> item.%s())\n", Utils.indent(4 + arrayDimensions.size()),
+                                mappingFunction, getterMethod);
+                        // for primitive types, just call toArray() on the primitive stream, otherwise
+                        // use toArray with a generator for the type
+                        switch (varType) {
+                            case "int", "bool" ->
+                                output.format("%s.toArray()", Utils.indent(4 + arrayDimensions.size()));
+                            default -> output.format("%s.toArray(%s[]::new)", Utils.indent(4 + arrayDimensions.size()),
+                                    sctxTypeToJavaType(varType));
+                        }
+                        for (int i = 1; i < arrayDimensions.size(); i++) {
+                            output.format(")\n");
+                            output.format("%s.toArray(%s%s::new)", Utils.indent(4 + arrayDimensions.size() - i),
+                                    sctxTypeToJavaType(varType), "[]".repeat(i + 1));
+                        }
+                        output.println(";");
+                    }
+                    method.formatLine("        }");
+                    method.addLine("");
+                }
+                method.addLine("        // Receive #ticktime");
+                method.addLine("        if (json.has(\"#ticktime\")) {");
+                method.addLine("            _ticktime = json.at(\"#ticktime\").asLong();");
+                method.addLine("        }");
+                method.addLine("    } catch (IOException e) {");
+                method.addLine("        e.printStackTrace();");
+                method.addLine("    } catch (Json.MalformedJsonException e) {");
+                method.addLine("       // Ignore other input");
+                method.addLine("    }");
             }
-            output.format("            // Receive #ticktime\n");
-            output.format("            if (json.has(\"#ticktime\")) {\n");
-            output.format("                _ticktime = json.at(\"#ticktime\").asLong();\n");
-            output.format("            }\n");
-            output.println("        } catch (IOException e) {");
-            output.println("            e.printStackTrace();");
-            output.println("        } catch (Json.MalformedJsonException e) {");
-            output.println("           // Ignore other input");
-            output.println("        }\n");
-            output.println("    }");
 
             outputMethodStart(output, "", "static void", "sendVariables", "");
             output.println("        Json json = Json.object();");
             for (var variable : variables) {
-                String varName = Utils.getJsonStringByKey(variable, "id").orElseThrow(() -> new IllegalArgumentException("Variable is missing required 'id' field."));
+                String varName = Utils.getJsonStringByKey(variable, "id")
+                        .orElseThrow(() -> new IllegalArgumentException("Variable is missing required 'id' field."));
                 output.format("        // Send %s\n", varName);
                 output.format("        json.set(\"%s\", model.%s);\n", varName, varName);
             }
@@ -146,20 +206,23 @@ public class Main {
     }
 
     private static void createStaticFiles(Path outputFolder) {
-        // TODO: This method should place the State and Region base classes in the output folder. For now, it does none of that.
+        // TODO: This method should place the State and Region base classes in the
+        // output folder. For now, it does none of that.
     }
 
     private static void processRootState(Json json, Path outputFolder) {
         String className = getStateName(json);
         var filePath = outputFolder.resolve(className + ".java");
 
-        // Create a PrintStream for the boilerplate content, then pass it to processState and processRegion to fill in the details.
+        // Create a PrintStream, add the boilerplate content, then pass it to
+        // processState and processRegion to fill in the details.
         try (var output = new PrintStream(filePath.toFile())) {
             output.format("package %s;\n\n", PACKAGE);
             output.print("import java.util.List;\n");
             output.format("import %s.%s.State;\n", PACKAGE, BASE_CLASS_PACKAGE);
             output.format("import %s.%s.Region;\n", PACKAGE, BASE_CLASS_PACKAGE);
             output.format("import %s.%s.InstantaneousRegion;\n", PACKAGE, BASE_CLASS_PACKAGE);
+            output.format("import %s.%s.ReferencedState;\n", PACKAGE, BASE_CLASS_PACKAGE);
             output.append("\n");
 
             processState(json, output, 0, "public ");
@@ -169,119 +232,182 @@ public class Main {
         } catch (Exception e) {
             e.printStackTrace();
         }
-
-        // Afterwards, write the content to the output folder as an appropriately named .java file.
-        // try (var outputStream = new FileOutputStream(filePath.toFile())) {
-        //     outputStream.write(output.toString().getBytes());
-        //     System.out.println("Generated file: " + filePath);
-        // } catch (FileNotFoundException e) {
-        //     System.err.println("Error writing file: " + e.getMessage());
-        // } catch (Exception e) {
-        //     e.printStackTrace();
-        // }
     }
 
     private static void processState(Json json, PrintStream output, int indentLevel, String classPrefix) {
         // Placeholder for the compilation logic
         System.out.println("Processing state: " + json.at("id").toString());
 
-        String id = Utils.getJsonStringByKey(json, "id").orElseThrow(() -> new IllegalArgumentException("State is missing required 'id' field."));
+        String id = Utils.getJsonStringByKey(json, "id")
+                .orElseThrow(() -> new IllegalArgumentException("State is missing required 'id' field."));
         String label = Utils.getJsonStringByKey(json, "label").orElse(id);
         List<Json> variables = Utils.getJsonListByKey(json, "variables").orElse(List.of());
         List<Json> regions = Utils.getJsonListByKey(json, "regions").orElse(List.of());
 
-        List<Json> actions = Utils.getJsonListByKey(json, "actions").orElseThrow(() -> new IllegalArgumentException("State is missing required 'actions' field."));
+        List<Json> actions = Utils.getJsonListByKey(json, "actions")
+                .orElseThrow(() -> new IllegalArgumentException("State is missing required 'actions' field."));
         List<Json> entryActions = actions.stream()
-            .filter(action -> ActionType.fromJsonAction(action).equals(ActionType.ENTRY))
-            .toList();
+                .filter(action -> ActionType.fromJsonAction(action).equals(ActionType.ENTRY))
+                .toList();
         List<Json> exitActions = actions.stream()
-            .filter(action -> ActionType.fromJsonAction(action).equals(ActionType.EXIT))
-            .toList();
+                .filter(action -> ActionType.fromJsonAction(action).equals(ActionType.EXIT))
+                .toList();
         List<Json> duringActions = actions.stream()
-            .filter(action -> ActionType.fromJsonAction(action).equals(ActionType.DURING))
-            .toList();
+                .filter(action -> ActionType.fromJsonAction(action).equals(ActionType.DURING))
+                .toList();
 
         List<String> regionNames = regions.stream()
                 .map(region -> Utils.getJsonStringByKey(region, "id").orElse(null))
                 .map(Utils::formatClassName)
                 .toList();
 
+        // TODO: turn this into a Record to avoid the Optional mess
+        var reference = Optional.ofNullable(json.at("reference"));
+        var referenceTarget = reference.map(ref -> Utils.getJsonStringByKey(ref, "targetID").orElseThrow());
+        var referenceParameters = reference.map(
+                ref -> Utils.getJsonListByKey(ref, "parameters").orElseThrow().stream().map(Json::asString).toList());
+
         String className = getStateName(json);
         String indent = "    ".repeat(indentLevel);
 
-        output.format("\n%s%sclass %s extends State {\n\n", indent, classPrefix, className);
+        if (reference.isEmpty()) {
+            output.format("\n%s%sclass %s extends State {\n\n", Utils.indent(indentLevel), classPrefix, className);
+        } else {
+            assert referenceTarget.isPresent() : "Reference target is missing.";
+            var target = referenceTarget.get();
+            output.format("\n%s%sclass %s extends ReferencedState<%s> {\n\n", Utils.indent(indentLevel), classPrefix,
+                    className, Utils.formatClassName(target));
+        }
         // Debug
-        output.format("%s    // Label: %s\n", indent, label);
-        // output.format("%s    // ID: %s\n", indent, id));
-        // output.format("%s    // Regions: %d\n", indent, regions.size()));
+        output.format("%s// Label: %s\n", Utils.indent(indentLevel + 1), label);
+        // output.format("%s // ID: %s\n", indent, id));
+        // output.format("%s // Regions: %d\n", indent, regions.size()));
 
         for (Json variable : variables) {
-            String varName = Utils.getJsonStringByKey(variable, "id").orElseThrow(() -> new IllegalArgumentException("Variable is missing required 'id' field."));
+            String varName = Utils.getJsonStringByKey(variable, "id")
+                    .orElseThrow(() -> new IllegalArgumentException("Variable is missing required 'id' field."));
             String varType = Utils.getJsonStringByKey(variable, "type").map(Main::sctxTypeToJavaType).orElse("Object");
+            String cardinalities = Utils.getJsonListByKey(variable, "cardinalities")
+                    .map(list -> list.stream().map(dim -> "[]").collect(Collectors.joining()))
+                    .orElse("");
             if (varName != null) {
-                output.format("%s    public %s %s;\n", indent, varType, varName);
+                output.append(Utils.indent(indentLevel + 1));
+                output.format("public %s%s %s;\n", varType, cardinalities, varName);
             }
         }
         if (!variables.isEmpty()) {
             output.append("\n");
         }
 
-        // add a constructor that initializes the regions and sets the final flag of the state
-        output.format("%s    public %s(boolean isFinal) {\n", indent, className);
-        output.format("%s        super(isFinal);\n", indent);
-        if (!regionNames.isEmpty()) {
-            output.format("%s        this.regions = List.of(%s);\n", indent, regionNames.stream().map(name -> "new " + name + "()").collect(Collectors.joining(", ")));
+        // add a constructor that initializes the regions and sets the final flag of the
+        // state
+        output.append(Utils.indent(indentLevel + 1));
+        output.format("public %s(boolean isFinal) {\n", className);
+        if (reference.isPresent()) {
+            assert referenceTarget.isPresent() : "Reference target is missing.";
+            var target = referenceTarget.get();
+
+            output.append(Utils.indent(indentLevel + 2));
+            output.format("super(new %s(isFinal), isFinal);\n", Utils.formatClassName(target));
+
+        } else {
+            output.append(Utils.indent(indentLevel + 2));
+            output.append("super(isFinal);\n");
+            if (!regionNames.isEmpty()) {
+                output.append(Utils.indent(indentLevel + 2));
+                // This is somewhat ugly. However, as Java does not allow trailing commas in
+                // List.of(), Collectors.joining is probably the least bad solution.
+                output.format("this.regions = List.of(%s);\n",
+                        regionNames.stream().map(name -> "new " + name + "()").collect(Collectors.joining(", ")));
+            }
         }
-        output.format("%s    }\n", indent, "");
+        output.format("%s}\n", Utils.indent(indentLevel + 1));
+
         if (!variables.isEmpty()) {
             outputMethodStart(output, indent, "void", "localReset", "");
             for (Json variable : variables) {
-                String varName = Utils.getJsonStringByKey(variable, "id").orElseThrow(() -> new IllegalArgumentException("Variable is missing required 'id' field."));
-                String varType = Utils.getJsonStringByKey(variable, "type").map(Main::sctxTypeToJavaType).orElse("Object");
+                String varName = Utils.getJsonStringByKey(variable, "id")
+                        .orElseThrow(() -> new IllegalArgumentException("Variable is missing required 'id' field."));
+                String varType = Utils.getJsonStringByKey(variable, "type").map(Main::sctxTypeToJavaType)
+                        .orElse("Object");
+                List<Integer> arrayDimensions = Utils.getJsonListByKey(variable, "cardinalities")
+                        .map(list -> list.stream().map(Json::asInteger).toList()).orElse(List.of());
                 String defaultValue = switch (varType) {
                     case "int" -> "0";
                     case "boolean" -> "false";
                     case "String" -> "\"\"";
                     default -> "null";
                 };
+                if (arrayDimensions.size() > 0) {
+                    defaultValue = String.format("new %s[%s]", varType,
+                            arrayDimensions.stream().map(String::valueOf).collect(Collectors.joining("][")));
+                }
                 String initialValue = Utils.getJsonStringByKey(variable, "initialValue").orElse(defaultValue);
-                output.format("%s        %s = %s;\n", indent, varName, initialValue);
+                output.append(Utils.indent(indentLevel + 2));
+                output.format("%s = %s;\n", varName, initialValue);
             }
-            output.format("%s    }\n", indent);
+            output.format("%s}\n", Utils.indent(indentLevel + 1));
         }
 
         if (!entryActions.isEmpty()) {
-            outputMethodStart(output, indent, "void", "onEntry", "");
-            processEntryExitActions(output, entryActions, indent);
-            output.format("%s    }\n", indent);
+            // outputMethodStart(output, indent, "void", "onEntry", "");
+            try (var _ = new Method(output, indentLevel, "void", "onEntry", "", true)) {
+                processEntryExitActions(output, entryActions, indent);
+            }
+            // output.format("%s }\n", indent);
         }
 
         if (!duringActions.isEmpty()) {
-            outputMethodStart(output, indent, "void", "onTick", "");
-            for (Json action : duringActions) {
-                String guard = Utils.getJsonStringByKey(action, "guard").orElse(null);
-                String effect = Utils.getJsonStringByKey(action, "action").orElse("");
-                boolean isImmediate = Utils.getJsonBooleanByKey(action, "isImmediate").orElse(false);
+            try (var method = new Method(output, indentLevel, "void", "onTick", "")) {
+                for (Json action : duringActions) {
+                    String guard = Utils.getJsonStringByKey(action, "guard").orElse(null);
+                    String effect = Utils.getJsonStringByKey(action, "action").orElse("");
+                    boolean isImmediate = Utils.getJsonBooleanByKey(action, "isImmediate").orElse(false);
 
-                if (!isImmediate) {
-                    guard = guard == null ? "delayedEnabled" : "delayedEnabled && (" + guard + ")";
-                }
+                    if (!isImmediate) {
+                        guard = guard == null ? "delayedEnabled" : "delayedEnabled && (" + guard + ")";
+                    }
 
-                if (guard != null) {
-                    output.format("%s        if (%s) {\n", indent, guard);
-                    output.format("%s            %s;\n", indent, effect);
-                    output.format("%s        }\n", indent);
-                } else {
-                    output.format("%s        %s;\n", indent, effect);
+                    if (guard != null) {
+                        method.formatLine("if (%s) {", guard);
+                        method.formatLine("    %s;", effect);
+                        method.formatLine("}");
+                    } else {
+                        method.formatLine("%s;", effect);
+                    }
                 }
             }
-            output.format("%s    }\n", indent);
+            // output.format("%s }\n", indent);
         }
 
         if (!exitActions.isEmpty()) {
-            outputMethodStart(output, indent, "void", "onExit", "");
-            processEntryExitActions(output, exitActions, indent);
-            output.format("%s    }\n", indent);
+            try (var _ = new Method(output, indentLevel, "void", "onExit", "")) {
+                processEntryExitActions(output, exitActions, indent);
+            }
+            // output.format("%s }\n", indent);
+        }
+
+        if (reference.isPresent()) {
+            assert referenceParameters.isPresent() : "Reference parameters are missing.";
+            var parameters = referenceParameters.get();
+
+            try (var method = new Method(output, indentLevel, "void", "copyVariablesIn", "")) {
+                for (String parameter : parameters) {
+                    String[] parts = parameter.split("to");
+                    String input_var = parts[1].strip();
+                    String output_var = parts[0].strip();
+                    method.formatLine("this.getReference().%s = %s;", output_var, input_var);
+                }
+            }
+
+            try (var method = new Method(output, indentLevel, "void", "copyVariablesOut", "")) {
+                for (String parameter : parameters) {
+                    String[] parts = parameter.split("to");
+                    String input_var = parts[1].strip();
+                    String output_var = parts[0].strip();
+                    method.formatLine("%s = this.getReference().%s;", input_var, output_var);
+                }
+            }
         }
 
         for (Json region : regions) {
@@ -295,44 +421,47 @@ public class Main {
     private static void processEntryExitActions(PrintStream output, List<Json> actions, String indent) {
         for (Json action : actions) {
             var guard = Utils.getJsonStringByKey(action, "guard");
-            var effect = Utils.getJsonStringByKey(action, "action").orElseThrow(() -> new IllegalArgumentException("Action is missing required 'action' field."));
+            var effect = Utils.getJsonStringByKey(action, "action")
+                    .orElseThrow(() -> new IllegalArgumentException("Action is missing required 'action' field."));
 
             guard.ifPresentOrElse(
-                (g) -> {
-                    output.format("%s        if (%s) {\n", indent, g);
-                    output.format("%s            %s;\n", indent, effect);
-                    output.format("%s        }\n", indent);
-                }, () -> {
-                    output.format("%s        %s;\n", indent, effect);
-                }
-            );
+                    (g) -> {
+                        output.format("%s        if (%s) {\n", indent, g);
+                        output.format("%s            %s;\n", indent, effect);
+                        output.format("%s        }\n", indent);
+                    }, () -> {
+                        output.format("%s        %s;\n", indent, effect);
+                    });
         }
     }
 
     private static void outputMethodStart(PrintStream output, String indent, String methodReturnType, String methodName,
             String methodArgs) {
-        // output.format("\n%s    @Override\n", indent);
+        // output.format("\n%s @Override\n", indent);
         output.format("\n%s    public %s %s(%s) {\n", indent, methodReturnType, methodName, methodArgs);
     }
 
     private static boolean isComplexState(Json state) {
         boolean hasActions = !Utils.getJsonListByKey(state, "actions").map(List::isEmpty).orElse(true);
         boolean hasRegions = !Utils.getJsonListByKey(state, "regions").map(List::isEmpty).orElse(true);
-        return hasActions || hasRegions;
+        boolean hasReference = state.has("reference");
+        return hasActions || hasRegions || hasReference;
     }
 
     private static void processRegion(Json json, PrintStream output, int indentLevel, String classPrefix) {
         System.out.println("Processing region: " + json.at("id").toString());
 
-        String id = Utils.getJsonStringByKey(json, "id").orElseThrow(() -> new IllegalArgumentException("Region is missing required 'id' field."));
+        String id = Utils.getJsonStringByKey(json, "id")
+                .orElseThrow(() -> new IllegalArgumentException("Region is missing required 'id' field."));
         String label = Utils.getJsonStringByKey(json, "label").orElse(id);
         List<Json> states = Utils.getJsonListByKey(json, "states").orElse(List.of());
         var complexStates = states.stream().filter(Main::isComplexState).toList();
 
         // var stateNames = states.stream()
-        //         .map(state -> Optional.ofNullable(state.at("id")).map(Json::asString).orElse(null))
-        //         .map(Main::formatClassName)
-        //         .toList();
+        // .map(state ->
+        // Optional.ofNullable(state.at("id")).map(Json::asString).orElse(null))
+        // .map(Main::formatClassName)
+        // .toList();
         var initialStateName = states.stream()
                 .filter(state -> Utils.getJsonBooleanByKey(state, "isInitial").orElse(false))
                 .findFirst()
@@ -340,17 +469,17 @@ public class Main {
 
         var weakTransitions = states.stream()
                 .collect(Collectors.toMap(
-                    state -> getStateName(state),
-                    state -> state.at("transitions").asJsonList().stream()
-                        .filter(transition -> !PreemptionType.fromJsonTransition(transition).isStrong()).toList()
-                ));
+                        state -> getStateName(state),
+                        state -> state.at("transitions").asJsonList().stream()
+                                .filter(transition -> !PreemptionType.fromJsonTransition(transition).isStrong())
+                                .toList()));
 
         var strongTransitions = states.stream()
                 .collect(Collectors.toMap(
-                    state -> getStateName(state),
-                    state -> state.at("transitions").asJsonList().stream()
-                        .filter(transition -> PreemptionType.fromJsonTransition(transition).isStrong()).toList()
-                ));
+                        state -> getStateName(state),
+                        state -> state.at("transitions").asJsonList().stream()
+                                .filter(transition -> PreemptionType.fromJsonTransition(transition).isStrong())
+                                .toList()));
 
         var hasImmediateTransitions = states.stream()
                 .flatMap(state -> state.at("transitions").asJsonList().stream())
@@ -363,10 +492,12 @@ public class Main {
         output.format("\n%s%sclass %s extends %s {\n", indent, classPrefix, className, superClassName);
         // Debug
         output.format("%s    // Label: %s\n", indent, label);
-        // output.format("%s    // ID: %s\n", indent, id));
-        // output.format("%s    // States: %d\n", indent, states.size()));
-        // output.format("%s// Strong Abort Transitions: %s\n", indent, strongTransitions.toString()));
-        // output.format("%s// Weak Abort Transitions: %s\n", indent, weakTransitions.toString());
+        // output.format("%s // ID: %s\n", indent, id));
+        // output.format("%s // States: %d\n", indent, states.size()));
+        // output.format("%s// Strong Abort Transitions: %s\n", indent,
+        // strongTransitions.toString()));
+        // output.format("%s// Weak Abort Transitions: %s\n", indent,
+        // weakTransitions.toString());
 
         for (var state : states) {
             var stateName = getStateName(state);
@@ -384,24 +515,24 @@ public class Main {
         }
         output.append("\n");
         output.format("%s        this.initialState = %s;\n", indent, initialStateName.orElse(null));
-        output.format("%s        this.states = List.of(%s);\n", indent, states.stream().map(Main::getStateName).collect(Collectors.joining(", ")));
+        output.format("%s        this.states = List.of(%s);\n", indent,
+                states.stream().map(Main::getStateName).collect(Collectors.joining(", ")));
         output.format("%s    }\n", indent);
-
 
         // process all strong abort transitions if there are any
         if (strongTransitions.values().stream().anyMatch(list -> !list.isEmpty())) {
-            outputMethodStart(output, indent, "boolean", "handlePreemptiveTransitions", "");
-            processTransitonMap(output, strongTransitions, indent);
-            output.format("%s        return false;\n", indent);
-            output.format("%s    }\n", indent);
+            try (var method = new Method(output, indentLevel, "boolean", "handlePreemptiveTransitions", "")) {
+                processTransitonMap(method, strongTransitions);
+                method.addLine("return false;");
+            }
         }
 
         // process all weak abort transitions if there are any
         if (weakTransitions.values().stream().anyMatch(list -> !list.isEmpty())) {
-            outputMethodStart(output, indent, "boolean", "handleNonPreemptiveTransitions", "");
-            processTransitonMap(output, weakTransitions, indent);
-            output.format("%s        return false;\n", indent);
-            output.format("%s    }\n", indent);
+            try (var method = new Method(output, indentLevel, "boolean", "handleNonPreemptiveTransitions", "")) {
+                processTransitonMap(method, weakTransitions);
+                method.addLine("return false;");
+            }
         }
 
         for (Json state : complexStates) {
@@ -416,60 +547,64 @@ public class Main {
     }
 
     private static String getStateName(Json state) {
-        return Utils.getJsonStringByKey(state, "id").map(Utils::formatClassName).orElseThrow(() -> new IllegalArgumentException("State is missing required 'id' field."));
+        return Utils.getJsonStringByKey(state, "id").map(Utils::formatClassName)
+                .orElseThrow(() -> new IllegalArgumentException("State is missing required 'id' field."));
     }
 
-    private static void processTransitonMap(PrintStream output, Map<String, List<Json>> transitionMap, String indent) {
+    private static void processTransitonMap(Method method, Map<String, List<Json>> transitionMap) {
         for (var entry : transitionMap.entrySet()) {
             String stateName = entry.getKey();
             List<Json> transitions = entry.getValue();
             if (!transitions.isEmpty()) {
-                output.format("%s        if (activeState.equals(%s)) {\n", indent, stateName);
+                method.formatLine("if (activeState.equals(%s)) {", stateName);
                 for (Json transition : transitions) {
                     String guard = Utils.getJsonStringByKey(transition, "guard").orElse("");
-                    String target = Utils.getJsonStringByKey(transition, "targetID").map(Utils::formatClassName).orElse(null);
-                    String effect = Utils.getJsonStringByKey(transition, "action").orElse("");
+                    String target = Utils.getJsonStringByKey(transition, "targetID").map(Utils::formatClassName)
+                            .orElse(null);
+                    var effect = Utils.getJsonStringByKey(transition, "action");
 
                     boolean isImmediate = Utils.getJsonBooleanByKey(transition, "isImmediate").orElse(false);
                     boolean isTermination = PreemptionType.fromJsonTransition(transition).isTermination();
 
                     if (isTermination) {
-                        guard = guard.isEmpty() ? "activeState.isTerminated()" : "activeState.isTerminated() && (" + guard + ")";
+                        guard = guard.isEmpty() ? "activeState.isTerminated()"
+                                : "activeState.isTerminated() && (" + guard + ")";
                     } else if (!isImmediate) {
-                        guard = guard.isEmpty() ? "activeState.delayedEnabled" : "activeState.delayedEnabled && (" + guard + ")";
+                        guard = guard.isEmpty() ? "activeState.delayedEnabled"
+                                : "activeState.delayedEnabled && (" + guard + ")";
                     }
 
                     if (target != null) {
                         if (!guard.isEmpty()) {
-                            output.format("%s            if (%s) { \n", indent, guard);
-                            output.format("%s                %s;\n", indent, buildTransitionCommand(target, effect));
-                            output.format("%s                return true;\n", indent);
-                            output.format("%s            }\n", indent);
+                            method.formatLine("    if (%s) {", guard);
+                            method.formatLine("        %s;", buildTransitionCommand(target, effect));
+                            method.addLine("        return true;");
+                            method.addLine("    }");
                         } else {
-                            output.format("%s            %s;\n", indent, buildTransitionCommand(target, effect));
-                            output.format("%s            return true;\n", indent);
+                            method.formatLine("    %s;", buildTransitionCommand(target, effect));
+                            method.addLine("    return true;");
                         }
                     }
                 }
-                output.format("%s        }\n", indent);
+                method.addLine("}");
             }
         }
     }
 
-    private static String buildTransitionCommand(String target, String effect) {
-        if (effect.isEmpty()) {
-            return String.format("transitionTo(%s)", target);
-        } else {
-            return String.format("transitionTo(%s, () -> { %s; })", target, effect);
-        }
+    private static String buildTransitionCommand(String target, Optional<String> effect) {
+        return effect.map(
+                (effect_string) -> String.format("transitionTo(%s, () -> { %s; })", target, effect_string)).orElseGet(
+                        () -> String.format("transitionTo(%s)", target));
     }
 
     private static String sctxTypeToJavaType(String sctxType) {
+        // Boxed types are used to allow for arrays.
         return switch (sctxType) {
             case "int" -> "int";
             case "bool" -> "boolean";
             case "string" -> "String";
-            default -> "Object"; // TODO: Handle unknown types more gracefully, e.g., by generating a custom class or throwing an error.
+            default -> "Object"; // TODO: Handle unknown types more gracefully, e.g., by generating a custom
+                                 // class or throwing an error.
         };
     }
 }
@@ -489,7 +624,8 @@ enum PreemptionType {
     }
 
     public static PreemptionType fromJsonTransition(Json transition) {
-        String preemptionStr = Utils.getJsonStringByKey(transition, "preemption").orElse("weak"); // Default to weak if not specified
+        String preemptionStr = Utils.getJsonStringByKey(transition, "preemption").orElse("weak"); // Default to weak if
+                                                                                                  // not specified
         return fromString(preemptionStr);
     }
 
@@ -517,7 +653,56 @@ enum ActionType {
     }
 
     static ActionType fromJsonAction(Json action) {
-        String typeStr = Utils.getJsonStringByKey(action, "type").orElseThrow(() -> new IllegalArgumentException("Action is missing required 'type' field."));
+        String typeStr = Utils.getJsonStringByKey(action, "type")
+                .orElseThrow(() -> new IllegalArgumentException("Action is missing required 'type' field."));
         return fromString(typeStr);
+    }
+}
+
+class Method implements AutoCloseable {
+    private final PrintStream output;
+    private final int indentLevel;
+    private boolean closed = false;
+
+    public Method(PrintStream output, int indentLevel, String returnType, String methodName, String methodArgs) {
+        this(output, indentLevel, returnType, methodName, methodArgs, false);
+    }
+
+    public Method(PrintStream output, int indentLevel, String returnType, String methodName, String methodArgs,
+            boolean isOverride) {
+        this.output = output;
+        this.indentLevel = indentLevel;
+        output.append("\n");
+        if (isOverride) {
+            output.append(Utils.indent(indentLevel + 1));
+            output.format("@Override\n");
+        }
+        output.append(Utils.indent(indentLevel + 1));
+        output.format("public %s %s(%s) {\n", returnType, methodName, methodArgs);
+    }
+
+    public void addLine(String statement) {
+        if (closed) {
+            throw new IllegalStateException("Cannot add lines to a closed method.");
+        }
+        if (statement != null && !statement.isEmpty()) {
+            output.append(Utils.indent(indentLevel + 2));
+            output.append(statement);
+        }
+        output.append("\n");
+    }
+
+    public void formatLine(String format, Object... args) {
+        addLine(String.format(format, args));
+    }
+
+    @Override
+    public void close() {
+        if (!closed) {
+            closed = true;
+            // output end of method
+            output.append(Utils.indent(indentLevel + 1));
+            output.append("}\n");
+        }
     }
 }

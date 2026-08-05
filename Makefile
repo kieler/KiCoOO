@@ -11,7 +11,7 @@ clean:
 
 build/jar/kicooo.jar: $(foreach src, $(SOURCES), build/classes/$(src).class) MANIFEST.MF
 	mkdir -p build/jar
-	jar cfm build/jar/kicooo.jar MANIFEST.MF -C build/classes .
+	jar cfm build/jar/kicooo.jar MANIFEST.MF -C build/classes . -C . sctx_schema.json
 
 build/classes/%.class: src/%.java
 	mkdir -p build/classes
