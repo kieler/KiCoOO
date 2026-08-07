@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 import mjson.Json;
 
@@ -110,6 +111,8 @@ public class Main {
                         case "int" -> "asInteger";
                         case "bool" -> "asBoolean";
                         case "string" -> "asString";
+                        case "float" -> "asDouble";
+                        case "double" -> "asDouble";
                         default -> "asJson"; // TODO: Handle unknown types more gracefully, e.g., by generating a custom
                                              // class or throwing an error.
                     };
@@ -121,46 +124,47 @@ public class Main {
                     } else {
                         // Array value
                         // TODO: make this work nice with the method thingy
-                        var mappingFunction = switch (varType) {
-                            case "int" -> "mapToInt";
-                            case "bool" -> "mapToBoolean";
-                            case "string" -> "map";
-                            default -> "map";
-                        };
-                        output.format("%smodel.%s = json.at(\"%s\").asJsonList().stream()\n", Utils.indent(4), varName,
-                                varName);
-                        for (int i = 1; i < arrayDimensions.size(); i++) {
-                            output.format("%s.map(item%d -> item%d.asJsonList().stream()\n", Utils.indent(4 + i), i, i);
+
+                        for (int i = 0; i < arrayDimensions.size(); i++) {
+                            output.append(Utils.indent(4 + i));
+                            output.format("// Dimension %d\n", i + 1);
+
+                            output.append(Utils.indent(4 + i));
+                            if (i == 0) {
+                                output.format("var _item%d = json.at(\"%s\").asJsonList();\n", i + 1, varName);
+                            } else {
+                                output.format("var _item%d = _item%d.get(_i%d).asJsonList();\n", i + 1, i, i);
+                            }
+
+                            output.append(Utils.indent(4 + i));
+                            output.format("for (int _i%d = 0; _i%d < _item%d.size(); _i%d++) {\n", i + 1, i + 1, i + 1,
+                                    i + 1);
                         }
-                        output.format("%s.%s(item -> item.%s())\n", Utils.indent(4 + arrayDimensions.size()),
-                                mappingFunction, getterMethod);
-                        // for primitive types, just call toArray() on the primitive stream, otherwise
-                        // use toArray with a generator for the type
-                        switch (varType) {
-                            case "int", "bool" ->
-                                output.format("%s.toArray()", Utils.indent(4 + arrayDimensions.size()));
-                            default -> output.format("%s.toArray(%s[]::new)", Utils.indent(4 + arrayDimensions.size()),
-                                    sctxTypeToJavaType(varType));
+
+                        // TODO: add the copying code.
+                        output.append(Utils.indent(4 + arrayDimensions.size()));
+                        output.format("model.%s[%s] = _item%d.get(_i%d).%s();\n", varName,
+                                IntStream.range(0, arrayDimensions.size()).mapToObj(i -> "_i" + (i + 1))
+                                        .collect(Collectors.joining("][")),
+                                arrayDimensions.size(), arrayDimensions.size(), getterMethod);
+
+                        for (int i = arrayDimensions.size() - 1; i >= 0; i--) {
+                            output.append(Utils.indent(4 + i));
+                            output.format("}\n", i + 1);
                         }
-                        for (int i = 1; i < arrayDimensions.size(); i++) {
-                            output.format(")\n");
-                            output.format("%s.toArray(%s%s::new)", Utils.indent(4 + arrayDimensions.size() - i),
-                                    sctxTypeToJavaType(varType), "[]".repeat(i + 1));
-                        }
-                        output.println(";");
                     }
-                    method.formatLine("        }");
+                    method.formatLine("    }");
                     method.addLine("");
                 }
-                method.addLine("        // Receive #ticktime");
-                method.addLine("        if (json.has(\"#ticktime\")) {");
-                method.addLine("            _ticktime = json.at(\"#ticktime\").asLong();");
-                method.addLine("        }");
-                method.addLine("    } catch (IOException e) {");
-                method.addLine("        e.printStackTrace();");
-                method.addLine("    } catch (Json.MalformedJsonException e) {");
-                method.addLine("       // Ignore other input");
+                method.addLine("    // Receive #ticktime");
+                method.addLine("    if (json.has(\"#ticktime\")) {");
+                method.addLine("        _ticktime = json.at(\"#ticktime\").asLong();");
                 method.addLine("    }");
+                method.addLine("} catch (IOException e) {");
+                method.addLine("    e.printStackTrace();");
+                method.addLine("} catch (Json.MalformedJsonException e) {");
+                method.addLine("   // Ignore other input");
+                method.addLine("}");
             }
 
             outputMethodStart(output, "", "static void", "sendVariables", "");
@@ -334,15 +338,25 @@ public class Main {
                         .map(list -> list.stream().map(Json::asInteger).toList()).orElse(List.of());
                 String defaultValue = switch (varType) {
                     case "int" -> "0";
+                    case "float", "double" -> "0.0";
                     case "boolean" -> "false";
-                    case "String" -> "\"\"";
+                    case "String" -> "null"; // TODO: current semantics set to null. Maybe "" is better?
                     default -> "null";
                 };
+                Optional<String> maybeInitialValue = Utils.getJsonStringByKey(variable, "initialValue");
+                String initialValue;
                 if (arrayDimensions.size() > 0) {
-                    defaultValue = String.format("new %s[%s]", varType,
-                            arrayDimensions.stream().map(String::valueOf).collect(Collectors.joining("][")));
+                    if (maybeInitialValue.isPresent()) {
+                        initialValue = String.format("new %s[%s]", varType,
+                                arrayDimensions.stream().map(_ -> "").collect(Collectors.joining("][")));
+                    } else {
+                        initialValue = String.format("new %s[%s]", varType,
+                                arrayDimensions.stream().map(String::valueOf).collect(Collectors.joining("][")));
+                    }
+
+                } else {
+                    initialValue = maybeInitialValue.orElse(defaultValue);
                 }
-                String initialValue = Utils.getJsonStringByKey(variable, "initialValue").orElse(defaultValue);
                 output.append(Utils.indent(indentLevel + 2));
                 output.format("%s = %s;\n", varName, initialValue);
             }
@@ -598,11 +612,13 @@ public class Main {
     }
 
     private static String sctxTypeToJavaType(String sctxType) {
-        // Boxed types are used to allow for arrays.
+        // float is mapped to double, because we probably have the memory.
         return switch (sctxType) {
             case "int" -> "int";
             case "bool" -> "boolean";
             case "string" -> "String";
+            case "float" -> "double";
+            case "double" -> "double";
             default -> "Object"; // TODO: Handle unknown types more gracefully, e.g., by generating a custom
                                  // class or throwing an error.
         };
