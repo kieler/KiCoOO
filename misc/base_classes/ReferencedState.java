@@ -2,19 +2,21 @@ package kieler_gen.base_classes;
 
 public abstract class ReferencedState<T extends State> extends State {
 
-    private final T reference;
+    public final T reference;
 
     public ReferencedState(T reference, boolean isFinal) {
         super(isFinal);
         this.reference = reference;
     }
 
-    public T getReference() {
-        return reference;
-    }
+    // public T getReference() {
+    //     return reference;
+    // }
 
+    // TODO: update name
     abstract public void copyVariablesIn();
 
+    // TODO: update name
     abstract public void copyVariablesOut();
 
     @Override
@@ -38,6 +40,7 @@ public abstract class ReferencedState<T extends State> extends State {
         copyVariablesOut();
     }
 
+    // TODO: this is probably not needed. Reset shouldn't change variables.
     @Override
     public void reset() {
         copyVariablesIn();

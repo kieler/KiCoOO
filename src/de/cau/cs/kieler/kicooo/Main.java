@@ -59,7 +59,9 @@ public class Main {
                 validation_result.at("errors").forEach(System.err::println);
                 return;
             }
-            processRootState(json.at(0), outputFolder);
+            for (Json rootState : json.asJsonList()) {
+                processRootState(rootState, outputFolder);
+            }
             if (generateMainClass) {
                 createMainClass(json.at(0), outputFolder);
             }
@@ -408,18 +410,18 @@ public class Main {
             try (var method = new Method(output, indentLevel, "void", "copyVariablesIn", "")) {
                 for (String parameter : parameters) {
                     String[] parts = parameter.split("to");
-                    String input_var = parts[1].strip();
-                    String output_var = parts[0].strip();
-                    method.formatLine("this.getReference().%s = %s;", output_var, input_var);
+                    String input_var = parts[0].strip();
+                    String output_var = parts[1].strip();
+                    method.formatLine("this.reference.%s = %s;", output_var, input_var);
                 }
             }
 
             try (var method = new Method(output, indentLevel, "void", "copyVariablesOut", "")) {
                 for (String parameter : parameters) {
                     String[] parts = parameter.split("to");
-                    String input_var = parts[1].strip();
-                    String output_var = parts[0].strip();
-                    method.formatLine("%s = this.getReference().%s;", input_var, output_var);
+                    String input_var = parts[0].strip();
+                    String output_var = parts[1].strip();
+                    method.formatLine("%s = this.reference.%s;", input_var, output_var);
                 }
             }
         }
