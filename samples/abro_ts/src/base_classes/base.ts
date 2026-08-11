@@ -1,191 +1,3 @@
-// class State {
-//     private readonly _isFinal: boolean;
-//     regions: Region[];
-
-//     constructor(isFinal: boolean) {
-//         this._isFinal = isFinal;
-//         this.regions = [];
-//     }
-
-//     onEntry() {
-//         // default implementation does nothing
-//     }
-
-//     onTick() {
-//         // default implementation does nothing
-//     }
-
-//     onExit() {
-//         // default implementation does nothing
-//     }
-
-//     enter() {
-//         this.onEntry();
-//         for (let region of this.regions) {
-//             region.enter();
-//         }
-//     }
-
-//     leave() {
-//         for (let region of this.regions) {
-//             region.leave();
-//         }
-//         this.onExit();
-//     }
-
-//     tick() {
-//         this.onTick();
-//         for (let region of this.regions) {
-//             region.tick();
-//         }
-
-//     }
-
-//     localReset() {
-//         // default implementation does nothing
-//     }
-
-//     reset() {
-//         this.localReset();
-//         for (let region of this.regions) {
-//             region.reset();
-//         }
-//     }
-
-//     isTerminated() {
-//         return this.regions.every(region => region.isTerminated());
-//     }
-
-//     isFinal() {
-//         return this._isFinal;
-//     }
-// }
-
-// class Region {
-//     activeState: State | null = null;
-//     states: State[] = [];
-//     initialState: State | null = null;
-
-//     constructor() {
-//     }
-
-//     enter() {
-//         if (this.activeState !== null) {
-//             this.activeState.enter();
-//         }
-//     }
-
-//     leave() {
-//         if (this.activeState !== null) {
-//             this.activeState.leave();
-//         }
-//     }
-
-//     isTerminated() {
-//         if (this.activeState === null) {
-//             return false;
-//         }
-//         return this.activeState.isFinal();
-//     }
-
-//     reset() {
-//         this.activeState = null;
-//         for (let state of this.states) {
-//             state.reset();
-//         }
-//     }
-
-//     transitionTo(state: State, action?: () => void) {
-//         if (this.activeState !== null) {
-//             this.activeState.leave();
-//         }
-//         if (action) {
-//             action();
-//         }
-//         this.activeState = state;
-//         this.activeState.reset();
-//         this.activeState.enter();
-//     }
-
-//     /**
-//      * Check for strong aborts and perform the first one that is enabled. Return
-//      * true if a transition was taken, false otherwise.
-//      *
-//      * @return true if a transition was taken, false otherwise
-//      */
-//     handlePreemptiveTransitions(): boolean {
-//         // default implementation does nothing
-//         return false;
-//     }
-
-//     /**
-//      * Check for weak aborts and perform the first one that is enabled. Return true
-//      * if a transition was taken, false otherwise.
-//      *
-//      * @return true if a transition was taken, false otherwise
-//      */
-//     handleNonPreemptiveTransitions(): boolean {
-//         // default implementation does nothing
-//         return false;
-//     }
-
-//     tick() {
-//         if (this.activeState == null) {
-//             this.transitionTo(this.initialState!);
-//             this.activeState!.tick();
-//         } else {
-//             let transitioned = this.handlePreemptiveTransitions();
-//             if (!transitioned) {
-//                 this.activeState.tick();
-//                 transitioned = this.handleNonPreemptiveTransitions();
-//             }
-//             if (transitioned) {
-//                 // tick the new active state if a transition was taken, to allow for immediate transitions and to ensure that
-//                 // delayed transitions are allowed in the next tick.
-//                 // TODO: check if this is actually does the right thing in this variant of the semantics.
-//                 this.activeState.tick();
-//             }
-//         }
-//     }
-// }
-
-// abstract class ReferencedState<T extends State> extends State {
-//     readonly reference: T;
-
-//     constructor(reference: T, isFinal: boolean) {
-//         super(isFinal);
-//         this.reference = reference;
-//     }
-
-//     abstract copyVariablesToReference(): void;
-
-//     abstract copyVariablesFromReference(): void;
-
-//     override enter() {
-//         this.copyVariablesToReference();
-//         super.enter();
-//         this.copyVariablesFromReference();
-//     }
-
-//     override leave() {
-//         this.copyVariablesToReference();
-//         super.leave();
-//         this.copyVariablesFromReference();
-//     }
-
-//     override tick() {
-//         this.copyVariablesToReference();
-//         super.tick();
-//         this.copyVariablesFromReference();
-//     }
-
-//     // TODO: this is probably not needed. Reset shouldn't change variables.
-//     override reset() {
-//         this.copyVariablesToReference();
-//         super.reset();
-//         this.copyVariablesFromReference();
-//     }
-//}
 
 interface State {
     regions: Region[];
@@ -300,19 +112,8 @@ class RegionImpl implements Region {
         this.states = states;
         this.initialState = initialState;
 
-        // this.handlePreemptiveTransitions = handlePreemptiveTransitions?.bind(this) ?? (() => false);
-        // this.handleNonPreemptiveTransitions = handleNonPreemptiveTransitions?.bind(this) ?? (() => false);
-
-        this.handlePreemptiveTransitions =
-            handlePreemptiveTransitions ??
-            function (this: RegionImpl): boolean {
-                return false;
-            }.bind(this);
-        this.handleNonPreemptiveTransitions =
-            handleNonPreemptiveTransitions ??
-            function (this: RegionImpl): boolean {
-                return false;
-            }.bind(this);
+        this.handlePreemptiveTransitions = handlePreemptiveTransitions ?? (() => false);
+        this.handleNonPreemptiveTransitions = handleNonPreemptiveTransitions ?? (() => false);
     }
 
     enter(): void {
@@ -364,17 +165,72 @@ class RegionImpl implements Region {
     }
 }
 
-function createSimpleState(_isFinal: boolean): State {
-    return {
-        regions: [],
+// This could possibly be two singletons.
+class SimpleState implements State {
+    regions: Region[];
+    private _isFinal: boolean;
 
-        enter: () => { },
-        leave: () => { },
-        tick: () => { },
-        reset: () => { },
-        isTerminated: () => false,
-        isFinal: () => _isFinal,
-    };
+    constructor(_isFinal: boolean) {
+        this._isFinal = _isFinal;
+        this.regions = [];
+    }
+
+    enter() { }
+    leave() { }
+    tick() { }
+    reset() { }
+    isTerminated() { return false; }
+    isFinal() { return this._isFinal; }
 }
 
-export { State, Region, createSimpleState, RegionImpl, StateImpl };
+class ReferenceState implements State {
+    regions: Region[] = [];
+
+    private copyVariablesToReference: () => void;
+    private copyVariablesFromReference: () => void;
+
+    constructor(
+        private _isFinal: boolean,
+        private reference: State,
+        {
+            copyVariablesToReference,
+            copyVariablesFromReference,
+        }: {
+            copyVariablesToReference: () => void;
+            copyVariablesFromReference: () => void;
+        },
+    ) {
+        this.copyVariablesToReference = copyVariablesToReference;
+        this.copyVariablesFromReference = copyVariablesFromReference;
+    }
+
+    enter(): void {
+        this.copyVariablesToReference();
+        this.reference.enter();
+        this.copyVariablesFromReference();
+    }
+    leave(): void {
+        this.copyVariablesToReference();
+        this.reference.leave();
+        this.copyVariablesFromReference();
+    }
+    tick(): void {
+        this.copyVariablesToReference();
+        this.reference.tick();
+        this.copyVariablesFromReference();
+    }
+    reset(): void {
+        this.copyVariablesToReference();
+        this.reference.reset();
+        this.copyVariablesFromReference();
+    }
+    isTerminated(): boolean {
+        return this.reference.isTerminated();
+    }
+    isFinal(): boolean {
+        return this._isFinal;
+    }
+}
+
+
+export { State, Region, SimpleState, ReferenceState, RegionImpl, StateImpl };

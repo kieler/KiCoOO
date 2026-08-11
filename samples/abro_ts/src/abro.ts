@@ -1,7 +1,7 @@
 import {
     State,
     Region,
-    createSimpleState,
+    SimpleState,
     RegionImpl,
     StateImpl,
 } from "./base_classes/base";
@@ -9,14 +9,10 @@ import {
 const ABRO: (isFinal: boolean) => {
     model: State;
     context: {
-        getA: () => boolean;
-        getB: () => boolean;
-        getR: () => boolean;
-        getO: () => boolean;
-        setA: (value: boolean) => void;
-        setB: (value: boolean) => void;
-        setR: (value: boolean) => void;
-        setO: (value: boolean) => void;
+        A: boolean;
+        B: boolean;
+        R: boolean;
+        O: boolean;
     };
 } = (_isFinal: boolean) => {
     let A = false;
@@ -31,31 +27,24 @@ const ABRO: (isFinal: boolean) => {
         O = false;
     };
 
-    const getA = () => A;
-    const getB = () => B;
-    const getR = () => R;
-    const getO = () => O;
-
-    const setA = (value: boolean) => {
-        A = value;
-    };
-    const setB = (value: boolean) => {
-        B = value;
-    };
-    const setR = (value: boolean) => {
-        R = value;
-    };
-    const setO = (value: boolean) => {
-        O = value;
+    const context = {
+        get A() { return A; },
+        set A(value: boolean) { A = value; },
+        get B() { return B; },
+        set B(value: boolean) { B = value; },
+        get R() { return R; },
+        set R(value: boolean) { R = value; },
+        get O() { return O; },
+        set O(value: boolean) { O = value; },
     };
 
-    const Root: Region = ((boolean) => {
+    const Root: Region = (() => {
         let ABO: State = ((_isFinal: boolean) => {
             const Wait: Region = (() => {
                 const WaitAB: State = ((_isFinal: boolean) => {
                     const HandleA: Region = (() => {
-                        const WaitA: State = createSimpleState(false);
-                        const DoneA: State = createSimpleState(true);
+                        const WaitA: State = new SimpleState(false);
+                        const DoneA: State = new SimpleState(true);
 
                         const states: State[] = [WaitA, DoneA];
                         const initialState: State = WaitA;
@@ -78,8 +67,8 @@ const ABRO: (isFinal: boolean) => {
                     })();
 
                     const HandleB: Region = (() => {
-                        const WaitB: State = createSimpleState(false);
-                        const DoneB: State = createSimpleState(true);
+                        const WaitB: State = new SimpleState(false);
+                        const DoneB: State = new SimpleState(true);
 
                         const states: State[] = [WaitB, DoneB];
                         const initialState: State = WaitB;
@@ -106,7 +95,7 @@ const ABRO: (isFinal: boolean) => {
                     return new StateImpl(_isFinal, regions);
                 })(false);
 
-                const Done: State = createSimpleState(true);
+                const Done: State = new SimpleState(true);
 
                 const states: State[] = [WaitAB, Done];
                 const initialState: State = WaitAB;
@@ -140,7 +129,7 @@ const ABRO: (isFinal: boolean) => {
         })(false);
 
         const states: State[] = [ABO];
-        const initialState: State | null = ABO;
+        const initialState: State = ABO;
 
         const handlePreemptiveTransitions = function (this: RegionImpl): boolean {
             if (this.activeState === ABO) {
@@ -161,7 +150,7 @@ const ABRO: (isFinal: boolean) => {
 
     return {
         model: new StateImpl(_isFinal, regions, { localReset }),
-        context: { getA, getB, getR, getO, setA, setB, setR, setO },
+        context,
     };
 };
 
