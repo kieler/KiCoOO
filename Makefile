@@ -1,5 +1,8 @@
 
-SOURCES = de/cau/cs/kieler/kicooo/Main \
+SOURCES = de/cau/cs/kieler/kicooo/model/State \
+		de/cau/cs/kieler/kicooo/model/Transition \
+		de/cau/cs/kieler/kicooo/model/Region \
+		de/cau/cs/kieler/kicooo/Main \
 		mjson/Json
 
 .PHONY: all clean

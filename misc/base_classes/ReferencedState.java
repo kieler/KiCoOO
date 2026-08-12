@@ -47,4 +47,9 @@ public abstract class ReferencedState<T extends State> extends State {
         reference.reset();
         copyVariablesOut();
     }
+
+    @Override
+    public boolean isTerminated() {
+        return reference.isTerminated();
+    }
 }
