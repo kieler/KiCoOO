@@ -14,6 +14,7 @@ import java.util.stream.IntStream;
 
 import de.cau.cs.kieler.kicooo.generators.IGenerator;
 import de.cau.cs.kieler.kicooo.generators.JavaGenerator;
+import de.cau.cs.kieler.kicooo.generators.TypeScriptGenerator;
 import de.cau.cs.kieler.kicooo.model.Action;
 import de.cau.cs.kieler.kicooo.model.Region;
 import de.cau.cs.kieler.kicooo.model.State;
@@ -28,6 +29,7 @@ public class Main {
 
     static final String PACKAGE = "kieler_gen";
     static final String BASE_CLASS_PACKAGE = "base_classes";
+    static final String BASE_MODULE = "./base_classes/base";
 
     /**
      * Main method for KiCoOO.
@@ -77,6 +79,7 @@ public class Main {
         var states = json.asJsonList().stream().map(State::fromJson).toList();
         IGenerator generator = switch (targetLanguage) {
             case "java" -> new JavaGenerator(PACKAGE, BASE_CLASS_PACKAGE);
+            case "typescript", "ts" -> new TypeScriptGenerator(BASE_MODULE);
             default -> throw new IllegalArgumentException("Unsupported target language: " + targetLanguage);
         };
         for (var rootState : states) {

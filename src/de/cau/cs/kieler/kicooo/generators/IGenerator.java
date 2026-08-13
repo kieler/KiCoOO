@@ -13,5 +13,4 @@ public interface IGenerator {
 
     public void processRootState(State state, Path outputFolder);
 
-    public void processState(State state, PrintStream output, int indentLevel, String classPrefix);
 }

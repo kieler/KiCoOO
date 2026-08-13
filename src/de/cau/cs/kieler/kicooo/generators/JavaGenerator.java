@@ -196,7 +196,6 @@ public class JavaGenerator implements IGenerator {
         }
     }
 
-    @Override
     public void processState(State state, PrintStream output, int indentLevel, String classPrefix) {
         System.out.println("Processing state: " + state.id());
 
@@ -280,7 +279,7 @@ public class JavaGenerator implements IGenerator {
                 if (arrayDimensions.size() > 0) {
                     if (maybeInitialValue.isPresent()) {
                         initialValue = String.format("new %s[%s]", varType,
-                                arrayDimensions.stream().map(_ -> "").collect(Collectors.joining("][")));
+                                arrayDimensions.stream().map(_ -> "").collect(Collectors.joining("]["))) + maybeInitialValue.get();
                     } else {
                         initialValue = String.format("new %s[%s]", varType,
                                 arrayDimensions.stream().map(String::valueOf).collect(Collectors.joining("][")));
