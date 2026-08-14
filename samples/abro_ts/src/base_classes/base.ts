@@ -135,21 +135,20 @@ class RegionImpl implements Region {
         }
     }
 
-    transitionTo(state: State, action?: () => void): void {
+    transitionTo(state: State | null, action?: () => void): void {
         this.activeState?.leave();
         if (action) {
             action();
         }
         this.activeState = state;
-        this.activeState.reset();
-        this.activeState.enter();
+        this.activeState?.reset();
+        this.activeState?.enter();
     }
 
     tick(): void {
         if (this.activeState == null) {
             this.transitionTo(this.initialState);
-            const newActiveState = this.activeState as State | null; // Safe-ish type assertion to satisfy the type checker.
-            newActiveState?.tick();
+            (this.activeState as State | null)?.tick();
         } else {
             let transitioned = this.handlePreemptiveTransitions();
             if (!transitioned) {

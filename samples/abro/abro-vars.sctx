@@ -2,21 +2,19 @@ scchart ABRO {
 	input bool A, B, R
 	output bool O
 
-	region Root {
-
 	initial state ABO {
 		entry do O = false
 
-		region Wait {
+		region {
 			initial state WaitAB {
-				region HandleA {
+				region {
 					initial state WaitA
 					if A go to DoneA
 
 					final state DoneA
 				}
 				
-				region HandleB {
+				region {
 					initial state WaitB
 					if B go to DoneB
 
@@ -29,6 +27,4 @@ scchart ABRO {
 		}
 	}
 	if R abort to ABO
-
-	}
 }

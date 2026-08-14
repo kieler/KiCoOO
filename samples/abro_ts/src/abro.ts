@@ -6,15 +6,7 @@ import {
     StateImpl,
 } from "./base_classes/base";
 
-const ABRO: (isFinal: boolean) => {
-    model: State;
-    context: {
-        A: boolean;
-        B: boolean;
-        R: boolean;
-        O: boolean;
-    };
-} = (_isFinal: boolean) => {
+const ABRO = (_isFinal: boolean) => {
     let A = false;
     let B = false;
     let R = false;
@@ -121,7 +113,7 @@ const ABRO: (isFinal: boolean) => {
 
             const regions: Region[] = [Wait];
 
-            const onEntry = () => {
+            const onEntry = function onEntry(): void {
                 O = false;
             };
 
@@ -148,8 +140,10 @@ const ABRO: (isFinal: boolean) => {
 
     const regions: Region[] = [Root];
 
+    const model: State = new StateImpl(_isFinal, regions, { localReset });
+
     return {
-        model: new StateImpl(_isFinal, regions, { localReset }),
+        model,
         context,
     };
 };

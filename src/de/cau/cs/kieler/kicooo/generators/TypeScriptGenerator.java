@@ -3,6 +3,7 @@ package de.cau.cs.kieler.kicooo.generators;
 import java.io.FileNotFoundException;
 import java.io.PrintStream;
 import java.nio.file.Path;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -153,6 +154,12 @@ public class TypeScriptGenerator implements IGenerator {
     public void processState(State state, PrintStream output, int indentLevel, boolean isRoot) {
         System.out.println("Processing state: " + state.id());
 
+        if (state.isConnector()) {
+            // Connector states are not represented as a state object, but rather as a
+            // transition target. They are not processed here.
+            return;
+        }
+
         if (!state.isComplex() && !isRoot) {
             // Simple states are not represented as an Instance of stateImpl over a closure,
             // but are an instance
@@ -208,7 +215,7 @@ public class TypeScriptGenerator implements IGenerator {
                 String defaultValue = switch (varType) {
                     case "number" -> "0";
                     case "boolean" -> "false";
-                    case "String" -> "null"; // TODO: current semantics set to null. Maybe "" is better?
+                    case "string | null" -> "null"; // TODO: current semantics set to null. Maybe "" is better? Then, we could also use a more tight type of string instead of string | null. 
                     default -> "null";
                 };
                 Optional<String> maybeInitialValue = variable.initialValue().map(Object::toString);
@@ -273,7 +280,7 @@ public class TypeScriptGenerator implements IGenerator {
         }
 
         // and construct the list of regions for this state
-        output.format("%s    const regions = [%s];\n", indent, regions.stream()
+        output.format("%s    const regions: Region[] = [%s];\n", indent, regions.stream()
                 .map(r -> r.getClassName())
                 .collect(Collectors.joining(", ")));
 
@@ -397,8 +404,9 @@ public class TypeScriptGenerator implements IGenerator {
         String id = region.id();
         String label = region.label();
         List<State> states = region.states();
-        var connectorStateNames = states.stream().filter(State::isConnector).map(State::getClassName)
-                .collect(Collectors.toSet());
+        // var connectorStateNames = states.stream().filter(State::isConnector).map(State::getClassName)
+        //         .collect(Collectors.toSet());
+        var stateMap = states.stream().collect(Collectors.toMap(State::getClassName, s -> s));
 
         var initialStateName = region.initialState().getClassName();
 
@@ -440,6 +448,7 @@ public class TypeScriptGenerator implements IGenerator {
 
         output.append("\n");
         output.format("%s    const states: State[] = [%s];\n", indent, states.stream()
+                .filter(s -> !s.isConnector())
                 .map(s -> s.getClassName())
                 .collect(Collectors.joining(", ")));
         // TODO: this won't work with initial connectors. This should be fixed.
@@ -450,7 +459,7 @@ public class TypeScriptGenerator implements IGenerator {
         if (hasStrongTransitions) {
             try (var function = new TypescriptFunction(output, indentLevel, "handlePreemptiveTransitions",
                     "this: RegionImpl", KOptional.of("boolean"))) {
-                processTransitonMap(function, strongTransitions, connectorStateNames);
+                processTransitonMap(function, strongTransitions, stateMap);
                 function.addLine("return false;");
             }
         }
@@ -460,7 +469,7 @@ public class TypeScriptGenerator implements IGenerator {
         if (hasWeakTransitions) {
             try (var function = new TypescriptFunction(output, indentLevel, "handleNonPreemptiveTransitions",
                     "this: RegionImpl", KOptional.of("boolean"))) {
-                processTransitonMap(function, weakTransitions, connectorStateNames);
+                processTransitonMap(function, weakTransitions, stateMap);
                 function.addLine("return false;");
             }
         }
@@ -480,32 +489,48 @@ public class TypeScriptGenerator implements IGenerator {
     }
 
     private static void processTransitonMap(TypescriptFunction function, Map<String, List<Transition>> transitionMap,
-            Set<String> connectorStateNames) {
+            Map<String, State> stateMap) {
         for (var entry : transitionMap.entrySet()) {
             String stateName = entry.getKey();
-            if (connectorStateNames.contains(stateName)) {
+            State state = stateMap.get(stateName);
+            if (state == null) {
+                throw new IllegalStateException("State not found for name: " + stateName);
+            } else if (state.isConnector()) {
                 // skip connector states, they are not represented as a state object and thus
-                // cannot be the active state
+                // cannot be the active state. We cannot start a transition here.
                 continue;
             }
             List<Transition> transitions = entry.getValue();
             if (!transitions.isEmpty()) {
                 function.formatLine("if (this.activeState === %s) {", stateName);
-                generateTransitionStatements(function, connectorStateNames, transitions, transitionMap, 1);
+                generateTransitionStatements(function, transitions, stateMap, 1, Set.of());
                 function.addLine("}");
             }
         }
     }
 
-    private static void generateTransitionStatements(TypescriptFunction function, Set<String> connectorStateNames,
-            List<Transition> transitions, Map<String, List<Transition>> transitionMap, int indentLevel) {
+    private static void generateTransitionStatements(TypescriptFunction function,
+            List<Transition> transitions, Map<String, State> stateMap, int indentLevel, Set<String> visitedConnectors) {
         for (var transition : transitions) {
             KOptional<String> guard = transition.guard();
-            String target = Utils.formatClassName(transition.targetID());
-            boolean targetIsConnector = connectorStateNames.contains(target);
+            String targetName = Utils.formatClassName(transition.targetID());
+            State targetState = stateMap.get(targetName);
+            if (targetState == null) {
+                throw new IllegalStateException("Target state not found for transition: " + transition);
+            }
+            boolean targetIsConnector = targetState.isConnector();
+            System.out.println("Processing transition " + transition + " to " + targetState + " isConnector: " + targetIsConnector);
             KOptional<String> effect = transition.action();
 
             boolean isTermination = transition.preemption().isTermination();
+
+            if (targetIsConnector) {
+                if (visitedConnectors.contains(targetName)) {
+                    throw new IllegalStateException("Cycle detected in connector transitions involving: " + targetName);
+                }
+                visitedConnectors = new HashSet<>(visitedConnectors);
+                visitedConnectors.add(targetName);
+            }
 
             if (isTermination) {
                 guard = KOptional.of(switch (guard) {
@@ -523,27 +548,33 @@ public class TypeScriptGenerator implements IGenerator {
                         // of the connector state's outgoing transitions are evaluated.
                         function.formatLine("%s    %s;", Utils.indent(indentLevel),
                                 buildTransitionCommand("null", effect));
-                        // TODO: this will currently only follow weak transitions from a connector state
-                        // when it is entered by a weak transition,
-                        // and weak transitions when it is entered by a strong transition. This is not
-                        // correct, and needs to be fixed.
-                        // There is no semantic difference between strong and weak transitions from a
-                        // connector state, so we should follow all transitions regardless of the
-                        // preemption type of the transition that led to the connector state.
-                        // TODO: fix.
-                        var connectorTransitions = transitionMap.get(target);
-                        generateTransitionStatements(function, connectorStateNames, connectorTransitions, transitionMap,
-                                indentLevel + 1);
+
+                        var connectorTransitions = targetState.transitions();
+                        generateTransitionStatements(function, connectorTransitions, stateMap,
+                                indentLevel + 1, visitedConnectors);
                     } else {
                         function.formatLine("%s    %s;", Utils.indent(indentLevel),
-                                buildTransitionCommand(target, effect));
+                                buildTransitionCommand(targetName, effect));
                         function.formatLine("%s    return true;", Utils.indent(indentLevel));
                     }
                     function.formatLine("%s}", Utils.indent(indentLevel));
                     break;
                 case None<String> _:
-                    function.formatLine("%s%s;", Utils.indent(indentLevel), buildTransitionCommand(target, effect));
-                    function.formatLine("%sreturn true;", Utils.indent(indentLevel));
+                    if (targetIsConnector) {
+                        // TODO: fix code duplication here as it it essentially the same as in the some case above. Maybe extract a method for this.
+                        // Transition to "null" as an intermediate step, to allow the current state to
+                        // be left and the transition effect to execute, before the guards
+                        // of the connector state's outgoing transitions are evaluated.
+                        function.formatLine("%s%s;", Utils.indent(indentLevel),
+                                buildTransitionCommand("null", effect));
+
+                        var connectorTransitions = targetState.transitions();
+                        generateTransitionStatements(function, connectorTransitions, stateMap,
+                                indentLevel, visitedConnectors);
+                    } else {
+                        function.formatLine("%s%s;", Utils.indent(indentLevel), buildTransitionCommand(targetName, effect));
+                        function.formatLine("%sreturn true;", Utils.indent(indentLevel));
+                    }
             }
         }
     }
@@ -561,7 +592,7 @@ public class TypeScriptGenerator implements IGenerator {
         return switch (sctxType) {
             case "int" -> "number";
             case "bool" -> "boolean";
-            case "string" -> "string";
+            case "string" -> "string | null";
             case "float" -> "number";
             case "double" -> "number";
             default -> "any"; // TODO: Handle unknown types more gracefully, e.g., by generating a custom
@@ -576,13 +607,13 @@ class TypescriptFunction implements AutoCloseable {
     private final int indentLevel;
     private boolean closed = false;
 
-    public TypescriptFunction(PrintStream output, int indentLevel, String methodName, String methodArgs,
+    public TypescriptFunction(PrintStream output, int indentLevel, String functionName, String functionArgs,
             KOptional<String> returnType) {
         this.output = output;
         this.indentLevel = indentLevel;
         output.append("\n");
         output.append(Utils.indent(indentLevel + 1));
-        output.format("const %s = function %s(%s)%s {\n", methodName, methodName, methodArgs,
+        output.format("const %s = function %s(%s)%s {\n", functionName, functionName, functionArgs,
                 returnType.map(rt -> ": " + rt).orElse(""));
     }
 
