@@ -74,11 +74,12 @@ public class Region {
         if (!transitioned) {
             activeState.tick();
             transitioned = handleNonPreemptiveTransitions();
-            if (transitioned) {
-                // tick the new active state if a transition was taken, to allow for immediate transitions and to ensure that
-                // delayed transitions are allowed in the next tick.
-                activeState.tick();
-            }
+        }
+        if (transitioned) {
+            // tick the new active state if a transition was taken, to allow for immediate
+            // transitions and to ensure that
+            // delayed transitions are allowed in the next tick.
+            activeState.tick();
         }
         activeState.delayedEnabled = true;
     }

@@ -3,9 +3,11 @@ package de.cau.cs.kieler.kicooo.generators;
 import java.io.FileNotFoundException;
 import java.io.PrintStream;
 import java.nio.file.Path;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
@@ -215,7 +217,8 @@ public class JavaGenerator implements IGenerator {
             output.format("\n%s%sclass %s extends ReferencedState<%s> {\n\n", Utils.indent(indentLevel), classPrefix,
                     state.getClassName(), Utils.formatClassName(target));
         } else {
-            output.format("\n%s%sclass %s extends State {\n\n", Utils.indent(indentLevel), classPrefix, state.getClassName());
+            output.format("\n%s%sclass %s extends State {\n\n", Utils.indent(indentLevel), classPrefix,
+                    state.getClassName());
         }
         // Add the label as a comment for clarity
         output.format("%s// Label: %s\n", Utils.indent(indentLevel + 1), label);
@@ -279,7 +282,8 @@ public class JavaGenerator implements IGenerator {
                 if (arrayDimensions.size() > 0) {
                     if (maybeInitialValue.isPresent()) {
                         initialValue = String.format("new %s[%s]", varType,
-                                arrayDimensions.stream().map(_ -> "").collect(Collectors.joining("]["))) + maybeInitialValue.get();
+                                arrayDimensions.stream().map(_ -> "").collect(Collectors.joining("][")))
+                                + maybeInitialValue.get();
                     } else {
                         initialValue = String.format("new %s[%s]", varType,
                                 arrayDimensions.stream().map(String::valueOf).collect(Collectors.joining("][")));
@@ -395,6 +399,7 @@ public class JavaGenerator implements IGenerator {
         String label = region.label();
         List<State> states = region.states();
         var complexStates = states.stream().filter(State::isComplex).toList();
+        var stateMap = states.stream().collect(Collectors.toMap(State::getClassName, s -> s));
 
         var initialStateName = region.initialState().getClassName();
 
@@ -413,6 +418,8 @@ public class JavaGenerator implements IGenerator {
                                 .toList()));
 
         var hasImmediateTransitions = states.stream()
+                .filter(state -> !state.isConnector()) // Immediate Transitions from connector states are handled
+                                                       // differently, so we can exclude them.
                 .flatMap(state -> state.transitions().stream())
                 .anyMatch(Transition::isImmediate);
 
@@ -433,6 +440,9 @@ public class JavaGenerator implements IGenerator {
         // add a constructor that initializes the states and sets the initial state
         output.format("%s    public %s() {\n", indent, className);
         for (var state : states) {
+            if (state.isConnector()) {
+                continue; // Skip connector states, as they are not instantiated.
+            }
             var stateName = state.getClassName();
             var stateClassName = (state.isComplex()) ? stateName : "State";
             var isFinal = state.isFinal();
@@ -441,23 +451,25 @@ public class JavaGenerator implements IGenerator {
         output.append("\n");
         output.format("%s        this.initialState = %s;\n", indent, initialStateName);
         output.format("%s        this.states = List.of(%s);\n", indent,
-                states.stream().map((state) -> {
+                states.stream().filter(state -> !state.isConnector()).map((state) -> {
                     return state.getClassName();
                 }).collect(Collectors.joining(", ")));
         output.format("%s    }\n", indent);
 
         // process all strong abort transitions if there are any
-        if (strongTransitions.values().stream().anyMatch(list -> !list.isEmpty())) {
+        boolean hasStrongTransitions = strongTransitions.values().stream().anyMatch(list -> !list.isEmpty());
+        if (hasStrongTransitions) {
             try (var method = new JavaMethod(output, indentLevel, "boolean", "handlePreemptiveTransitions", "")) {
-                processTransitonMap(method, strongTransitions);
+                processTransitonMap(method, strongTransitions, stateMap);
                 method.addLine("return false;");
             }
         }
 
         // process all weak abort transitions if there are any
-        if (weakTransitions.values().stream().anyMatch(list -> !list.isEmpty())) {
+        boolean hasWeakTransitions = weakTransitions.values().stream().anyMatch(list -> !list.isEmpty());
+        if (hasWeakTransitions) {
             try (var method = new JavaMethod(output, indentLevel, "boolean", "handleNonPreemptiveTransitions", "")) {
-                processTransitonMap(method, weakTransitions);
+                processTransitonMap(method, weakTransitions, stateMap);
                 method.addLine("return false;");
             }
         }
@@ -469,46 +481,98 @@ public class JavaGenerator implements IGenerator {
         output.format("%s}\n", indent);
     }
 
-    private static void processTransitonMap(JavaMethod method, Map<String, List<Transition>> transitionMap) {
+    private static void processTransitonMap(JavaMethod method, Map<String, List<Transition>> transitionMap,
+            Map<String, State> stateMap) {
         for (var entry : transitionMap.entrySet()) {
             String stateName = entry.getKey();
             List<Transition> transitions = entry.getValue();
             if (!transitions.isEmpty()) {
                 method.formatLine("if (activeState.equals(%s)) {", stateName);
-                for (var transition : transitions) {
-                    KOptional<String> guard = transition.guard();
-                    String target = Utils.formatClassName(transition.targetID());
-                    KOptional<String> effect = transition.action();
 
-                    boolean isImmediate = transition.isImmediate();
-                    boolean isTermination = transition.preemption().isTermination();
+                generateTransitionStatements(method, transitions, stateMap, 1, Set.of(), false);
 
-                    if (isTermination) {
-                        guard = KOptional.of(switch (guard) {
-                            case None<String> _ -> "activeState.isTerminated()";
-                            case Some(var value) -> "activeState.isTerminated() && (" + value + ")";
-                        });
-                    } else if (!isImmediate) {
-                        guard = KOptional.of(switch (guard) {
-                            case None<String> _ -> "activeState.delayedEnabled";
-                            case Some(var value) -> "activeState.delayedEnabled && (" + value + ")";
-                        });
-                    }
-
-                    assert (target != null);
-                    switch (guard) {
-                        case Some(var guardExpr):
-                            method.formatLine("    if (%s) {", guardExpr);
-                            method.formatLine("        %s;", buildTransitionCommand(target, effect));
-                            method.addLine("        return true;");
-                            method.addLine("    }");
-                            break;
-                        case None<String> _:
-                            method.formatLine("    %s;", buildTransitionCommand(target, effect));
-                            method.addLine("    return true;");
-                    }
-                }
                 method.addLine("}");
+            }
+        }
+    }
+
+    private static void generateTransitionStatements(JavaMethod method, List<Transition> transitions,
+            Map<String, State> stateMap, int indentLevel, Set<String> visitedConnectors, boolean fromConnector) {
+        for (var transition : transitions) {
+            KOptional<String> guard = transition.guard();
+            String targetName = Utils.formatClassName(transition.targetID());
+            State targetState = stateMap.get(targetName);
+            if (targetState == null) {
+                throw new IllegalStateException("Target state not found for transition: " + transition);
+            }
+            boolean targetIsConnector = targetState.isConnector();
+            System.out.println("Processing transition " + transition + " to " + targetState + " isConnector: "
+                    + targetIsConnector);
+            KOptional<String> effect = transition.action();
+
+            boolean isImmediate = fromConnector || transition.isImmediate();
+            boolean isTermination = transition.preemption().isTermination();
+
+            if (targetIsConnector) {
+                if (visitedConnectors.contains(targetName)) {
+                    throw new IllegalStateException("Cycle detected in connector transitions involving: " + targetName);
+                }
+                visitedConnectors = new HashSet<>(visitedConnectors);
+                visitedConnectors.add(targetName);
+            }
+
+            if (isTermination) {
+                guard = KOptional.of(switch (guard) {
+                    case None<String> _ -> "activeState.isTerminated()";
+                    case Some(var value) -> "activeState.isTerminated() && (" + value + ")";
+                });
+            }
+
+            if (!isImmediate) {
+                guard = KOptional.of(switch (guard) {
+                    case None<String> _ -> "activeState.delayedEnabled";
+                    case Some(var value) -> "activeState.delayedEnabled && (" + value + ")";
+                });
+            }
+
+            switch (guard) {
+                case Some(var guardExpr):
+                    method.formatLine("%sif (%s) {", Utils.indent(indentLevel), guardExpr);
+                    if (targetIsConnector) {
+                        // Transition to "null" as an intermediate step, to allow the current state to
+                        // be left and the transition effect to execute, before the guards
+                        // of the connector state's outgoing transitions are evaluated.
+                        method.formatLine("%s    %s;", Utils.indent(indentLevel),
+                                buildTransitionCommand("null", effect));
+
+                        var connectorTransitions = targetState.transitions();
+                        generateTransitionStatements(method, connectorTransitions, stateMap,
+                                indentLevel + 1, visitedConnectors, true);
+                    } else {
+                        method.formatLine("%s    %s;", Utils.indent(indentLevel),
+                                buildTransitionCommand(targetName, effect));
+                        method.formatLine("%s    return true;", Utils.indent(indentLevel));
+                    }
+                    method.formatLine("%s}", Utils.indent(indentLevel));
+                    break;
+                case None<String> _:
+                    if (targetIsConnector) {
+                        // TODO: fix code duplication here as it it essentially the same as in the some
+                        // case above. Maybe extract a method for this.
+                        // Transition to "null" as an intermediate step, to allow the current state to
+                        // be left and the transition effect to execute, before the guards
+                        // of the connector state's outgoing transitions are evaluated.
+                        method.formatLine("%s%s;", Utils.indent(indentLevel),
+                                buildTransitionCommand("null", effect));
+
+                        var connectorTransitions = targetState.transitions();
+                        generateTransitionStatements(method, connectorTransitions, stateMap,
+                                indentLevel, visitedConnectors, true);
+                    } else {
+                        method.formatLine("%s%s;", Utils.indent(indentLevel),
+                                buildTransitionCommand(targetName, effect));
+                        method.formatLine("%sreturn true;", Utils.indent(indentLevel));
+                    }
             }
         }
     }
@@ -532,9 +596,8 @@ public class JavaGenerator implements IGenerator {
                                  // class or throwing an error.
         };
     }
-    
-}
 
+}
 
 class JavaMethod implements AutoCloseable {
     private final PrintStream output;
