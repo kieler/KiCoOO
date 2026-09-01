@@ -1,6 +1,9 @@
 package de.cau.cs.kieler.kicooo.generators;
 
+import java.io.BufferedReader;
+import java.io.FileReader;
 import java.io.FileNotFoundException;
+import java.io.IOException;
 import java.io.PrintStream;
 import java.nio.file.Path;
 import java.util.HashSet;
@@ -55,6 +58,20 @@ public class JavaGenerator implements IGenerator {
             }
             output.println();
             output.println("public class Main {\n");
+
+            // allow for inv.java insertion
+            output.println("    private static void inv() {");
+            try(BufferedReader br = new BufferedReader(new FileReader("inv.java"))) {     
+                String l = br.readLine();
+                while (l != null) {
+                    output.format("        %s\n", l);
+                    l = br.readLine();
+                }                
+            } catch (IOException e) {
+                output.println("    // TODO: add assert statements here");
+            }
+            output.println("    }\n");
+
             output.format("    public static %s model = new %s(false);\n\n", className, className);
             // output.println(" private static long _tickstart;");
             // output.println(" private static long _ticktime;\n");
@@ -162,6 +179,9 @@ public class JavaGenerator implements IGenerator {
             output.println();
             output.println("            // Send outputs");
             output.println("            sendVariables();");
+            output.println();
+            output.println("            // check invariants");
+            output.println("            inv();");
 
             output.println("        }");
 
