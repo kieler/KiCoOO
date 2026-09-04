@@ -398,7 +398,7 @@ public class JavaGenerator implements IGenerator {
         String id = region.id();
         String label = region.label();
         List<State> states = region.states();
-        var complexStates = states.stream().filter(State::isComplex).toList();
+        var complexStates = states.stream().filter(s -> !s.isConnector()).filter(State::isComplex).toList();
         var stateMap = states.stream().collect(Collectors.toMap(State::getClassName, s -> s));
 
         var initialStateName = region.initialState().getClassName();
@@ -432,6 +432,9 @@ public class JavaGenerator implements IGenerator {
         output.format("%s    // Label: %s\n", indent, label);
 
         for (var state : states) {
+            if (state.isConnector()) {
+                continue; // Skip connector states, as they are not instantiated.
+            }
             var stateName = state.getClassName();
             output.format("%s    private final State %s;\n", indent, stateName);
         }
@@ -485,6 +488,13 @@ public class JavaGenerator implements IGenerator {
             Map<String, State> stateMap) {
         for (var entry : transitionMap.entrySet()) {
             String stateName = entry.getKey();
+            State state = stateMap.get(stateName);
+            if (state == null) {
+                throw new IllegalStateException("State not found for transition map entry: " + stateName);
+            }
+            if (state.isConnector()) {
+                continue; // Skip connector states, as they are not instantiated and we do not start a tick in one.
+            }
             List<Transition> transitions = entry.getValue();
             if (!transitions.isEmpty()) {
                 method.formatLine("if (activeState.equals(%s)) {", stateName);

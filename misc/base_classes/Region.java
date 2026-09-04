@@ -22,6 +22,9 @@ public class Region {
     }
 
     public boolean isTerminated() {
+        if (activeState == null) {
+            return false;
+        }
         return activeState.isFinal();
     }
 
@@ -33,9 +36,11 @@ public class Region {
             action.run();
         }
         activeState = newState;
-        activeState.reset();
-        activeState.enter();
-        activeState.delayedEnabled = false;
+        if (activeState != null) {
+            activeState.reset();
+            activeState.enter();
+            activeState.delayedEnabled = false;
+        }
     }
 
     // TODO: this could also be part of the State interface, but then we would need
@@ -75,13 +80,15 @@ public class Region {
             activeState.tick();
             transitioned = handleNonPreemptiveTransitions();
         }
-        if (transitioned) {
+        if (transitioned && activeState != null) {
             // tick the new active state if a transition was taken, to allow for immediate
             // transitions and to ensure that
             // delayed transitions are allowed in the next tick.
             activeState.tick();
         }
-        activeState.delayedEnabled = true;
+        if (activeState != null) {
+            activeState.delayedEnabled = true;
+        }
     }
 
     public void reset() {
