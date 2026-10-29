@@ -167,6 +167,7 @@ public class JavaGenerator implements IGenerator {
 
             output.println("        model.reset();");
             output.println("        sendVariables();");
+            output.println("        model.enter();");
 
             output.println("        while (true) {");
             output.println("            // Read inputs");

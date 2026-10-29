@@ -119,14 +119,17 @@
                 "isOutput": {
                     "type": "boolean"
                 },
+                "isConst": {
+                    "type": "boolean"
+                },
                 "cardinalities": {
                     "type": "array",
                     "items": {
-                        "type": "integer"
+                        "type": ["string", "integer"]
                     }
                 }
             },
-            "required": ["id", "type", "isInput", "isOutput", "cardinalities"]
+            "required": ["id", "type", "isInput", "isOutput", "isConst", "cardinalities"]
         },
         "action": {
             "type": "object",
