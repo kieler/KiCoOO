@@ -30,6 +30,6 @@ This will by default include a `Main.java` file with a sample interface for the 
 java -jar kicooo.jar output java --no-main < input.json
 ```
 
-In addition to the generated code, you also need to include the runtime library for the target language in your project. This is currently not done automatically by the compiler. The runtime library for the `java` target language can be found in the [`misc`](./misc/)-folder of this repository. The runtime library for the `typescript` target language can currently only be found in the [`samples/abro-ts`](./samples/abro-ts/)-folder of this repository. You can copy the runtime library to your project and include it in your build process.
+In addition to the generated code, you also need to include the runtime library for the target language in your project. This is currently not done automatically by the compiler. The runtime library for the `java` target language can be found in the [`misc`](./misc/)-folder of this repository. The runtime library for the `typescript` target language can currently only be found in the [`samples/abro_ts`](./samples/abro_ts/)-folder of this repository. You can copy the runtime library to your project and include it in your build process.
 
 If you want to use referenced charts in your SCChart, you need to generate code for each of the referenced charts separately and include the generated code in your project. Remember to set the `--no-main` flag for all referenced charts, as you only want to have one `Main` class in your project.
